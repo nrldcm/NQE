@@ -6,8 +6,9 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+# Least privilege by default; only the build job needs to publish releases.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   test:
@@ -21,7 +22,7 @@ jobs:
           channel: stable
           cache: true
       - run: flutter --version
-      - run: flutter pub get
+      - run: flutter pub get --enforce-lockfile
       - name: Analyze
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
         continue-on-error: true
@@ -31,6 +32,8 @@ jobs:
   build:
     name: Build release APK
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -47,11 +50,24 @@ jobs:
 
       - run: flutter --version
 
-      - name: Prepare Android project
+      # Use a STABLE signing key across builds so app updates install over the
+      # previous version instead of forcing an uninstall (which would wipe the
+      # on-device ledger). Reuses the committed keystore as the debug key.
+      - name: Install stable signing key
+        run: |
+          mkdir -p ~/.android
+          base64 -d android-signing/nqe-debug-keystore.b64 > ~/.android/debug.keystore
+          keytool -list -v -keystore ~/.android/debug.keystore \
+            -storepass android -alias androiddebugkey | grep -E "SHA1|Valid" || true
+
+      - name: Prepare & harden Android project
         run: bash tool/prepare_android.sh
 
       - name: Get packages
-        run: flutter pub get
+        run: flutter pub get --enforce-lockfile
+
+      - name: Generate launcher icons
+        run: dart run flutter_launcher_icons
 
       - name: Build APK (release)
         run: flutter build apk --release

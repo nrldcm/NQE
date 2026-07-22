@@ -1,6 +1,10 @@
-// Branded animated splash. Runs first-launch bootstrap (seed + load) then
-// routes to the lock screen (if enabled) or straight into the app.
+// Branded animated splash. Runs first-launch bootstrap, then routes to:
+//   * Onboarding  (first run / after reinstall — security setup is required)
+//   * LockScreen  (returning user with app-lock enabled)
+//   * HomeShell   (returning user, no lock)
+// Boot is fully guarded so the app can never get stuck on the loading screen.
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../seed.dart';
 import '../services/auth_service.dart';
@@ -9,6 +13,9 @@ import '../theme.dart';
 import '../widgets/nqe_logo.dart';
 import 'home_shell.dart';
 import 'lock_screen.dart';
+import 'onboarding_screen.dart';
+
+const String kOnboardedKey = 'onboarded';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -39,21 +46,37 @@ class _SplashScreenState extends State<SplashScreen>
 
   Future<void> _boot() async {
     final started = DateTime.now();
-    await seedIfEmpty();
-    await appState.load();
-    final lock = await AuthService.instance.lockEnabled();
+    bool onboarded = false;
+    bool lock = false;
 
-    // Keep the splash visible for at least ~1.2s for a polished feel.
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      onboarded = prefs.getBool(kOnboardedKey) ?? false;
+      if (onboarded) {
+        await seedIfEmpty();
+        await appState.load();
+        lock = await AuthService.instance.lockEnabled();
+      }
+    } catch (_) {
+      // Never hang on the splash — proceed to a safe destination even if boot
+      // hit an error. A returning user still reaches the app; a new user still
+      // reaches onboarding.
+    }
+
+    // Keep the splash visible briefly for a polished feel.
     final elapsed = DateTime.now().difference(started);
     final remaining = const Duration(milliseconds: 1200) - elapsed;
     if (remaining > Duration.zero) await Future.delayed(remaining);
     if (!mounted) return;
 
+    final Widget next = !onboarded
+        ? const OnboardingScreen()
+        : (lock ? const LockScreen() : const HomeShell());
+
     Navigator.of(context).pushReplacement(
       PageRouteBuilder(
         transitionDuration: const Duration(milliseconds: 400),
-        pageBuilder: (_, __, ___) =>
-            lock ? const LockScreen() : const HomeShell(),
+        pageBuilder: (_, __, ___) => next,
         transitionsBuilder: (_, anim, __, child) =>
             FadeTransition(opacity: anim, child: child),
       ),

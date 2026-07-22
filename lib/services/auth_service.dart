@@ -1,8 +1,14 @@
-// App lock: biometric (fingerprint / face) with a PIN fallback.
+// App lock: biometric (fingerprint / face / device credential) with a PIN
+// fallback.
 //
-// The PIN is never stored in clear — only a salted SHA-256 hash lives in
-// shared_preferences. Biometric verification is delegated to the OS via
-// local_auth (the app never sees the fingerprint/face data).
+// Hardening:
+//   * The PIN is stretched with PBKDF2-HMAC-SHA256 (100k iterations) over a
+//     random salt — an extracted hash is far slower to brute-force than a bare
+//     SHA-256, and the compare is constant-time.
+//   * Wrong-PIN attempts are counted and trigger an escalating lockout, so the
+//     on-screen keypad can't be exhaustively guessed.
+//   * Biometric verification is delegated to the OS (the app never sees the
+//     fingerprint/face data).
 import 'dart:convert';
 import 'dart:math';
 
@@ -19,6 +25,11 @@ class AuthService {
   static const _kBiometricEnabled = 'biometric_enabled';
   static const _kPinHash = 'pin_hash';
   static const _kPinSalt = 'pin_salt';
+  static const _kFails = 'pin_fails';
+  static const _kLockUntil = 'pin_lock_until';
+
+  static const int _pbkdf2Iterations = 100000;
+  static const int _lockThreshold = 5; // attempts before lockout kicks in
 
   final _localAuth = LocalAuthentication();
 
@@ -39,7 +50,13 @@ class AuthService {
   Future<void> setBiometricEnabled(bool v) async =>
       (await _prefs).setBool(_kBiometricEnabled, v);
 
-  /// Whether the device actually has biometric hardware available.
+  /// A lock is only usable if at least one real factor is configured.
+  /// Used to fail *closed* (never auto-open a misconfigured lock).
+  Future<bool> hasUsableFactor() async {
+    if (await hasPin()) return true;
+    return (await biometricEnabled()) && (await canUseBiometrics());
+  }
+
   Future<bool> canUseBiometrics() async {
     try {
       final supported = await _localAuth.isDeviceSupported();
@@ -58,6 +75,7 @@ class AuthService {
     }
   }
 
+  /// Biometric OR device-credential (PIN/pattern/password) via the OS.
   Future<bool> authenticateBiometric() async {
     try {
       return await _localAuth.authenticate(
@@ -87,9 +105,27 @@ class AuthService {
   }
 
   Future<String> _hash(String pin, String salt) async {
-    final digest =
-        await Sha256().hash(utf8.encode('$salt::$pin::nqe'));
-    return base64Url.encode(digest.bytes);
+    final pbkdf2 = Pbkdf2(
+      macAlgorithm: Hmac.sha256(),
+      iterations: _pbkdf2Iterations,
+      bits: 256,
+    );
+    final key = await pbkdf2.deriveKey(
+      secretKey: SecretKey(utf8.encode('$pin::nqe')),
+      nonce: base64Url.decode(salt),
+    );
+    final bytes = await key.extractBytes();
+    return base64Url.encode(bytes);
+  }
+
+  /// Constant-time string comparison to avoid timing side-channels.
+  bool _constEq(String a, String b) {
+    if (a.length != b.length) return false;
+    var diff = 0;
+    for (var i = 0; i < a.length; i++) {
+      diff |= a.codeUnitAt(i) ^ b.codeUnitAt(i);
+    }
+    return diff == 0;
   }
 
   Future<void> setPin(String pin) async {
@@ -98,20 +134,69 @@ class AuthService {
     final hash = await _hash(pin, salt);
     await prefs.setString(_kPinSalt, salt);
     await prefs.setString(_kPinHash, hash);
+    await _clearFailures();
   }
 
   Future<void> clearPin() async {
     final prefs = await _prefs;
     await prefs.remove(_kPinSalt);
     await prefs.remove(_kPinHash);
+    await _clearFailures();
   }
 
-  Future<bool> verifyPin(String pin) async {
+  Future<bool> _verifyPin(String pin) async {
     final prefs = await _prefs;
     final salt = prefs.getString(_kPinSalt) ?? '';
     final stored = prefs.getString(_kPinHash) ?? '';
     if (salt.isEmpty || stored.isEmpty) return false;
     final hash = await _hash(pin, salt);
-    return hash == stored;
+    return _constEq(hash, stored);
   }
+
+  // ---- Lockout --------------------------------------------------------------
+  /// Seconds remaining in the current lockout (0 if not locked).
+  Future<int> lockoutRemaining() async {
+    final prefs = await _prefs;
+    final until = prefs.getInt(_kLockUntil) ?? 0;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (until <= now) return 0;
+    return ((until - now) / 1000).ceil();
+  }
+
+  Future<int> _failCount() async => (await _prefs).getInt(_kFails) ?? 0;
+
+  Future<void> _clearFailures() async {
+    final prefs = await _prefs;
+    await prefs.remove(_kFails);
+    await prefs.remove(_kLockUntil);
+  }
+
+  Future<void> _registerFailure() async {
+    final prefs = await _prefs;
+    final fails = (prefs.getInt(_kFails) ?? 0) + 1;
+    await prefs.setInt(_kFails, fails);
+    if (fails >= _lockThreshold) {
+      // Escalating backoff: 30s, 60s, 120s, ... capped at 15 min.
+      final over = fails - _lockThreshold; // 0,1,2,...
+      final seconds = min(900, 30 * pow(2, over).toInt());
+      final until =
+          DateTime.now().millisecondsSinceEpoch + seconds * 1000;
+      await prefs.setInt(_kLockUntil, until);
+    }
+  }
+
+  /// Submit a PIN attempt. Honors lockout, manages the failure counter.
+  /// Returns true only on a correct PIN.
+  Future<bool> submitPin(String pin) async {
+    if (await lockoutRemaining() > 0) return false;
+    final ok = await _verifyPin(pin);
+    if (ok) {
+      await _clearFailures();
+      return true;
+    }
+    await _registerFailure();
+    return false;
+  }
+
+  Future<int> failedAttempts() => _failCount();
 }

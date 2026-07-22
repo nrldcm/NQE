@@ -2,6 +2,10 @@
 // PIN), encrypted backup/restore, and about.
 import 'package:flutter/material.dart';
 
+import 'dart:typed_data';
+
+import 'package:shared_preferences/shared_preferences.dart';
+
 import '../services/auth_service.dart';
 import '../services/backup_service.dart';
 import '../services/crypto_service.dart';
@@ -18,16 +22,36 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final _auth = AuthService.instance;
+  static const _kExportPass = 'export_passphrase';
   bool _lock = false;
   bool _bio = false;
   bool _hasPin = false;
   bool _canBio = false;
   bool _busy = false;
+  String _exportPass = '';
 
   @override
   void initState() {
     super.initState();
     _loadSecurity();
+    _loadBackupPass();
+  }
+
+  Future<void> _loadBackupPass() async {
+    final prefs = await SharedPreferences.getInstance();
+    _exportPass = prefs.getString(_kExportPass) ?? '';
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _saveBackupPass(String v) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (v.isEmpty) {
+      await prefs.remove(_kExportPass);
+    } else {
+      await prefs.setString(_kExportPass, v);
+    }
+    _exportPass = v;
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadSecurity() async {
@@ -123,7 +147,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _export() async {
     setState(() => _busy = true);
     try {
-      await BackupService.instance.exportAndShare();
+      await BackupService.instance.exportAndShare(passphrase: _exportPass);
     } catch (e) {
       _snack('Export failed: $e');
     } finally {
@@ -155,14 +179,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (confirm != true) return;
     setState(() => _busy = true);
     try {
-      final res = await BackupService.instance.pickAndImport();
-      if (res == null) {
+      final Uint8List? bytes = await BackupService.instance.pickFileBytes();
+      if (bytes == null) {
         _snack('Import cancelled');
-      } else {
-        await appState.load();
-        _snack(
-            'Restored ${res.accounts} books, ${res.trades} trades, ${res.cashflows} cashflows');
+        return;
       }
+      // Decide passphrase: use the saved one; prompt if the file needs one
+      // and the saved passphrase is missing/wrong.
+      var pass = _exportPass;
+      if (BackupService.instance.needsPassphrase(bytes) && pass.isEmpty) {
+        pass = await _promptPassphrase() ?? '';
+        if (pass.isEmpty) {
+          _snack('Passphrase required to restore this backup');
+          return;
+        }
+      }
+      ImportResult res;
+      try {
+        res = await BackupService.instance.importBytes(bytes, passphrase: pass);
+      } on CryptoException catch (e) {
+        // Wrong/absent passphrase → offer one retry with a prompt.
+        if (BackupService.instance.needsPassphrase(bytes)) {
+          final retry = await _promptPassphrase();
+          if (retry == null || retry.isEmpty) {
+            _snack(e.message);
+            return;
+          }
+          res = await BackupService.instance
+              .importBytes(bytes, passphrase: retry);
+        } else {
+          rethrow;
+        }
+      }
+      await appState.load();
+      _snack(
+          'Restored ${res.accounts} books, ${res.trades} trades, ${res.cashflows} cashflows');
     } on CryptoException catch (e) {
       _snack(e.message);
     } catch (e) {
@@ -170,6 +221,73 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<String?> _promptPassphrase() async {
+    final pal = context.nqe;
+    final c = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: pal.surface,
+        title: Text('Backup passphrase', style: TextStyle(color: pal.textHi)),
+        content: TextField(
+          controller: c,
+          obscureText: true,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Passphrase'),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, c.text),
+              child: const Text('Restore')),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _setBackupPassphrase() async {
+    final pal = context.nqe;
+    final c = TextEditingController(text: _exportPass);
+    final res = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: pal.surface,
+        title: Text('Backup passphrase', style: TextStyle(color: pal.textHi)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Optional. If set, exported backups can ONLY be restored with this '
+              'passphrase — real confidentiality even for files saved to Drive. '
+              'Leave blank to use app-only encryption.',
+              style: TextStyle(color: pal.textLo, fontSize: 12),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: c,
+              obscureText: true,
+              decoration:
+                  const InputDecoration(labelText: 'Passphrase (blank = off)'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, c.text.trim()),
+              child: const Text('Save')),
+        ],
+      ),
+    );
+    if (res == null) return;
+    await _saveBackupPass(res);
+    _snack(res.isEmpty ? 'Backup passphrase removed' : 'Backup passphrase set');
   }
 
   @override
@@ -248,6 +366,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   subtitle: Text('Import a .nqe file (replaces data)',
                       style: TextStyle(color: pal.textLo, fontSize: 12)),
                   onTap: _busy ? null : _import,
+                ),
+                _divider(pal),
+                ListTile(
+                  leading: Icon(Icons.password, color: pal.textHi),
+                  title: Text('Backup passphrase',
+                      style: TextStyle(color: pal.textHi)),
+                  subtitle: Text(
+                      _exportPass.isEmpty
+                          ? 'Off — app-only encryption'
+                          : 'On — backups require your passphrase',
+                      style: TextStyle(color: pal.textLo, fontSize: 12)),
+                  trailing: Icon(Icons.chevron_right, color: pal.textLo),
+                  onTap: _setBackupPassphrase,
                 ),
               ]),
               const SizedBox(height: 20),

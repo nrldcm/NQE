@@ -9,8 +9,10 @@ const int kSchemaVersion = 1;
 String _s(Object? v, [String def = '']) => v == null ? def : v.toString();
 double _d(Object? v, [double def = 0]) {
   if (v == null) return def;
-  if (v is num) return v.toDouble();
-  return double.tryParse(v.toString()) ?? def;
+  final double? r = v is num ? v.toDouble() : double.tryParse(v.toString());
+  // Reject NaN / Infinity — they poison calculations and break JSON export.
+  if (r == null || !r.isFinite) return def;
+  return r;
 }
 
 int _i(Object? v, [int def = 0]) {
@@ -18,6 +20,10 @@ int _i(Object? v, [int def = 0]) {
   if (v is num) return v.toInt();
   return int.tryParse(v.toString()) ?? def;
 }
+
+/// Guards against NaN/Infinity ever being persisted or JSON-encoded.
+double _fin(double v) => v.isFinite ? v : 0.0;
+double? _finN(double? v) => v == null ? null : (v.isFinite ? v : 0.0);
 
 enum AccountKind { trading, dividend }
 
@@ -57,8 +63,8 @@ class Account {
         'broker': broker,
         'currency': currency,
         'kind': kind == AccountKind.dividend ? 'dividend' : 'trading',
-        'starting_capital': startingCapital,
-        'fx_to_php': fxToPhp,
+        'starting_capital': _fin(startingCapital),
+        'fx_to_php': _fin(fxToPhp),
         'color': color,
         'sort_order': sortOrder,
         'archived': archived,
@@ -109,8 +115,8 @@ class Cashflow {
         'account_id': accountId,
         'date': date,
         'type': type,
-        'amount': amount,
-        'fx_rate': fxRate,
+        'amount': _fin(amount),
+        'fx_rate': _fin(fxRate),
         'remarks': remarks,
         'created_at': createdAt,
       };
@@ -183,10 +189,10 @@ class Trade {
         'account_id': accountId,
         'date': date,
         'stock': stock,
-        'shares': shares,
-        'buy_price': buyPrice,
-        'sell_price': sellPrice,
-        'fees': fees,
+        'shares': _fin(shares),
+        'buy_price': _fin(buyPrice),
+        'sell_price': _finN(sellPrice),
+        'fees': _fin(fees),
         'holding_period': holdingPeriod,
         'setup': setup,
         'remarks': remarks,
@@ -239,9 +245,9 @@ class Dividend {
         'account_id': accountId,
         'date': date,
         'stock': stock,
-        'shares': shares,
-        'div_rate': divRate,
-        'net_amount': netAmount,
+        'shares': _fin(shares),
+        'div_rate': _fin(divRate),
+        'net_amount': _fin(netAmount),
         'remarks': remarks,
         'created_at': createdAt,
       };
@@ -284,9 +290,9 @@ class Holding {
         'id': id,
         'account_id': accountId,
         'stock': stock,
-        'goal_shares': goalShares,
-        'current_shares': currentShares,
-        'avg_price': avgPrice,
+        'goal_shares': _fin(goalShares),
+        'current_shares': _fin(currentShares),
+        'avg_price': _fin(avgPrice),
         'created_at': createdAt,
       };
 
@@ -332,10 +338,14 @@ class LedgerSnapshot {
       };
 
   factory LedgerSnapshot.fromJson(Map<String, Object?> j) {
-    List<Map<String, Object?>> arr(String k) =>
-        ((j[k] as List?) ?? const [])
-            .map((e) => (e as Map).cast<String, Object?>())
-            .toList();
+    List<Map<String, Object?>> arr(String k) {
+      final v = j[k];
+      if (v is! List) return const [];
+      return v
+          .whereType<Map>()
+          .map((e) => e.cast<String, Object?>())
+          .toList();
+    }
     return LedgerSnapshot(
       schema: _i(j['schema'], kSchemaVersion),
       exportedAt: _s(j['exportedAt']),

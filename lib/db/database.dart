@@ -27,9 +27,11 @@ class LedgerDb {
       path,
       version: kSchemaVersion,
       onConfigure: (d) async {
+        // Only no-result PRAGMAs here — running a *querying* PRAGMA (e.g.
+        // journal_mode, which returns a row) inside onConfigure can deadlock
+        // sqflite and hang the app on the loading screen. WAL is already the
+        // default journal mode on Android, so we don't need to set it.
         await d.execute('PRAGMA foreign_keys = ON');
-        // WAL improves crash-resilience of writes.
-        await d.execute('PRAGMA journal_mode = WAL');
       },
       onCreate: (d, _) async => _createSchema(d),
       onUpgrade: (d, _, __) async => _createSchema(d),

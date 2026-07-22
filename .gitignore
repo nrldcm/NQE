@@ -4,7 +4,7 @@
 build/
 .flutter-plugins
 .flutter-plugins-dependencies
-pubspec.lock
+# pubspec.lock IS committed (app, not package) for reproducible CI builds.
 
 # Platform folders are regenerated in CI via `flutter create .`
 android/

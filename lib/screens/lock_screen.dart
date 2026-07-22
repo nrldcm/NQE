@@ -1,5 +1,8 @@
 // App lock. Supports OS biometric / device-credential (fingerprint, face,
-// device PIN, pattern, password) via local_auth, plus an in-app PIN fallback.
+// device PIN, pattern, password) via local_auth, plus an in-app PIN with an
+// escalating lockout. Fails CLOSED — a misconfigured lock never auto-opens.
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -8,8 +11,15 @@ import '../theme.dart';
 import '../widgets/nqe_logo.dart';
 import 'home_shell.dart';
 
+/// True whenever a LockScreen is on screen — lets the app-level lifecycle
+/// guard avoid stacking a second lock over an existing one.
+bool lockScreenActive = false;
+
 class LockScreen extends StatefulWidget {
-  const LockScreen({super.key});
+  /// When true the screen was pushed on resume and simply pops on unlock
+  /// (revealing the screen underneath) instead of rebuilding the app.
+  final bool resumeLock;
+  const LockScreen({super.key, this.resumeLock = false});
 
   @override
   State<LockScreen> createState() => _LockScreenState();
@@ -21,23 +31,47 @@ class _LockScreenState extends State<LockScreen> {
   bool _hasPin = false;
   bool _canBio = false;
   bool _error = false;
+  int _lockRemaining = 0;
+  Timer? _ticker;
   final int _pinMax = 6;
 
   @override
   void initState() {
     super.initState();
+    lockScreenActive = true;
     _prepare();
+  }
+
+  @override
+  void dispose() {
+    lockScreenActive = false;
+    _ticker?.cancel();
+    super.dispose();
   }
 
   Future<void> _prepare() async {
     _hasPin = await _auth.hasPin();
     final bioEnabled = await _auth.biometricEnabled();
     _canBio = bioEnabled && await _auth.canUseBiometrics();
+    await _refreshLockout();
     if (mounted) setState(() {});
-    // Auto-prompt biometric on open.
-    if (_canBio) _tryBiometric();
-    // If lock is on but nothing is actually configured, don't trap the user.
-    if (!_hasPin && !_canBio) _unlock();
+    // Auto-prompt the OS on open when biometrics are on, OR — to fail closed —
+    // whenever there is no in-app PIN configured (forces device credential).
+    if (_canBio || !_hasPin) _tryBiometric();
+  }
+
+  Future<void> _refreshLockout() async {
+    final remaining = await _auth.lockoutRemaining();
+    _lockRemaining = remaining;
+    _ticker?.cancel();
+    if (remaining > 0) {
+      _ticker = Timer.periodic(const Duration(seconds: 1), (t) async {
+        final r = await _auth.lockoutRemaining();
+        if (!mounted) return;
+        setState(() => _lockRemaining = r);
+        if (r <= 0) t.cancel();
+      });
+    }
   }
 
   Future<void> _tryBiometric() async {
@@ -47,6 +81,11 @@ class _LockScreenState extends State<LockScreen> {
 
   void _unlock() {
     if (!mounted) return;
+    if (widget.resumeLock) {
+      // Pushed over the running app on resume — just reveal it again.
+      Navigator.of(context).pop();
+      return;
+    }
     Navigator.of(context).pushReplacement(
       PageRouteBuilder(
         transitionDuration: const Duration(milliseconds: 350),
@@ -58,6 +97,7 @@ class _LockScreenState extends State<LockScreen> {
   }
 
   Future<void> _onDigit(String d) async {
+    if (_lockRemaining > 0) return;
     if (_entered.length >= _pinMax) return;
     HapticFeedback.selectionClick();
     setState(() {
@@ -65,12 +105,13 @@ class _LockScreenState extends State<LockScreen> {
       _error = false;
     });
     if (_entered.length >= 4) {
-      // Try verifying once we have at least 4 digits.
-      final ok = await _auth.verifyPin(_entered);
+      final ok = await _auth.submitPin(_entered);
       if (ok) {
         _unlock();
       } else if (_entered.length >= _pinMax) {
         HapticFeedback.heavyImpact();
+        await _refreshLockout();
+        if (!mounted) return;
         setState(() {
           _error = true;
           _entered = '';
@@ -84,10 +125,21 @@ class _LockScreenState extends State<LockScreen> {
     setState(() => _entered = _entered.substring(0, _entered.length - 1));
   }
 
+  String _fmtLock(int s) {
+    if (s >= 60) {
+      final m = (s / 60).ceil();
+      return '${m}m';
+    }
+    return '${s}s';
+  }
+
   @override
   Widget build(BuildContext context) {
     final pal = context.nqe;
-    return Scaffold(
+    final locked = _lockRemaining > 0;
+    return PopScope(
+      canPop: false, // never allow the lock to be dismissed by back gesture
+      child: Scaffold(
       backgroundColor: pal.bg,
       body: SafeArea(
         child: Column(
@@ -96,12 +148,15 @@ class _LockScreenState extends State<LockScreen> {
             const NqeLogo(scale: 0.7),
             const SizedBox(height: 16),
             Text(
-              _hasPin ? 'Enter your PIN' : 'Unlock to continue',
-              style: TextStyle(color: pal.textLo, fontSize: 14),
+              locked
+                  ? 'Too many attempts — try again in ${_fmtLock(_lockRemaining)}'
+                  : (_hasPin ? 'Enter your PIN' : 'Unlock to continue'),
+              style: TextStyle(
+                  color: locked ? NqeColors.loss : pal.textLo, fontSize: 14),
             ),
             const SizedBox(height: 20),
             if (_hasPin) _dots(pal),
-            if (_error)
+            if (_error && !locked)
               Padding(
                 padding: const EdgeInsets.only(top: 12),
                 child: Text('Wrong PIN, try again',
@@ -109,12 +164,12 @@ class _LockScreenState extends State<LockScreen> {
               ),
             const Spacer(flex: 2),
             if (_hasPin)
-              _keypad(pal)
+              Opacity(opacity: locked ? 0.4 : 1, child: _keypad(pal))
             else
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 40),
                 child: FilledButton.icon(
-                  onPressed: _tryBiometric,
+                  onPressed: locked ? null : _tryBiometric,
                   icon: const Icon(Icons.fingerprint),
                   label: const Text('Unlock'),
                 ),
@@ -122,6 +177,7 @@ class _LockScreenState extends State<LockScreen> {
             const SizedBox(height: 24),
           ],
         ),
+      ),
       ),
     );
   }
