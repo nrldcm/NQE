@@ -70,16 +70,10 @@ class _StatsScreenState extends State<StatsScreen> {
 
           return Column(
             children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
-                child: _AccountDropdown(
-                  accounts: accounts,
-                  value: account.id,
-                  onChanged: (id) {
-                    if (id == null) return;
-                    setState(() => _selectedId = id);
-                  },
-                ),
+              _AccountChips(
+                accounts: accounts,
+                value: account.id,
+                onChanged: (id) => setState(() => _selectedId = id),
               ),
               Expanded(
                 child: FutureBuilder<_StatsData>(
@@ -107,11 +101,13 @@ class _StatsData {
   const _StatsData({required this.cashflows, required this.trades});
 }
 
-class _AccountDropdown extends StatelessWidget {
+/// Always-visible, horizontally-scrollable account picker (chips). Avoids the
+/// dropdown-menu scroll quirk where top items could scroll out of reach.
+class _AccountChips extends StatelessWidget {
   final List<Account> accounts;
   final String value;
-  final ValueChanged<String?> onChanged;
-  const _AccountDropdown({
+  final ValueChanged<String> onChanged;
+  const _AccountChips({
     required this.accounts,
     required this.value,
     required this.onChanged,
@@ -120,62 +116,53 @@ class _AccountDropdown extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final pal = context.nqe;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14),
-      decoration: BoxDecoration(
-        color: pal.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: pal.line),
-      ),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<String>(
-          value: value,
-          isExpanded: true,
-          borderRadius: BorderRadius.circular(14),
-          dropdownColor: pal.surface,
-          icon: Icon(Icons.expand_more, color: pal.textLo),
-          style: TextStyle(
-            color: pal.textHi,
-            fontSize: 15,
-            fontWeight: FontWeight.w700,
-          ),
-          onChanged: onChanged,
-          items: [
-            for (final a in accounts)
-              DropdownMenuItem<String>(
-                value: a.id,
-                child: Row(
-                  children: [
-                    Container(
-                      width: 10,
-                      height: 10,
-                      decoration: BoxDecoration(
-                        color: Color(a.color),
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        a.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: pal.textHi,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                    Text(
-                      a.currency,
-                      style: TextStyle(color: pal.textLo, fontSize: 12),
-                    ),
-                  ],
+    return SizedBox(
+      height: 44,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+        itemCount: accounts.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, i) {
+          final a = accounts[i];
+          final selected = a.id == value;
+          return GestureDetector(
+            onTap: () => onChanged(a.id),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: selected ? pal.surface2 : pal.surface,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: selected ? pal.textHi : pal.line,
+                  width: selected ? 1.5 : 1,
                 ),
               ),
-          ],
-        ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 9,
+                    height: 9,
+                    decoration: BoxDecoration(
+                      color: Color(a.color),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    a.name,
+                    style: TextStyle(
+                      color: selected ? pal.textHi : pal.textLo,
+                      fontSize: 14,
+                      fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
       ),
     );
   }
