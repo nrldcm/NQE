@@ -6,7 +6,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../seed.dart';
 import '../services/auth_service.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
@@ -53,7 +52,6 @@ class _SplashScreenState extends State<SplashScreen>
       final prefs = await SharedPreferences.getInstance();
       onboarded = prefs.getBool(kOnboardedKey) ?? false;
       if (onboarded) {
-        await seedIfEmpty();
         await appState.load();
         lock = await AuthService.instance.lockEnabled();
       }

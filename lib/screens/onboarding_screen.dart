@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../seed.dart';
 import '../services/auth_service.dart';
 import '../services/backup_service.dart';
 import '../services/crypto_service.dart';
@@ -91,7 +90,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   Future<void> _startFresh() async {
     setState(() => _busy = true);
     try {
-      await seedIfEmpty();
+      // Truly empty ledger — the user adds their own books.
       await appState.load();
       await _finish();
     } catch (e) {

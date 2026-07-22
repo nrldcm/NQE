@@ -133,17 +133,21 @@ class EditorDropdown<T> extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DropdownButtonFormField<T>(
-      value: value,
-      isExpanded: true,
-      decoration: InputDecoration(labelText: label),
-      items: items
-          .map((e) => DropdownMenuItem<T>(
-                value: e,
-                child: Text(display?.call(e) ?? e.toString()),
-              ))
-          .toList(),
-      onChanged: onChanged,
+    // Match EditorField's bottom spacing so fields line up when side-by-side.
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: DropdownButtonFormField<T>(
+        value: value,
+        isExpanded: true,
+        decoration: InputDecoration(labelText: label),
+        items: items
+            .map((e) => DropdownMenuItem<T>(
+                  value: e,
+                  child: Text(display?.call(e) ?? e.toString()),
+                ))
+            .toList(),
+        onChanged: onChanged,
+      ),
     );
   }
 }
