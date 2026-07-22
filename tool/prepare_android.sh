@@ -18,9 +18,9 @@ flutter create . --platforms=android --org "$ORG" --project-name nqe
 APP="android/app"
 MANIFEST="$APP/src/main/AndroidManifest.xml"
 
-echo "==> Injecting permissions (biometric, internet, LAN-sync foreground service)"
+echo "==> Injecting permissions (biometric, internet, camera, LAN-sync foreground service)"
 if ! grep -q "USE_BIOMETRIC" "$MANIFEST"; then
-  perl -0pi -e 's/(<manifest[^>]*>)/$1\n    <uses-permission android:name="android.permission.USE_BIOMETRIC"\/>\n    <uses-permission android:name="android.permission.INTERNET"\/>\n    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"\/>\n    <uses-permission android:name="android.permission.WAKE_LOCK"\/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"\/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"\/>\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"\/>/s' "$MANIFEST"
+  perl -0pi -e 's/(<manifest[^>]*>)/$1\n    <uses-permission android:name="android.permission.USE_BIOMETRIC"\/>\n    <uses-permission android:name="android.permission.INTERNET"\/>\n    <uses-permission android:name="android.permission.CAMERA"\/>\n    <uses-feature android:name="android.hardware.camera" android:required="false"\/>\n    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"\/>\n    <uses-permission android:name="android.permission.WAKE_LOCK"\/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"\/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"\/>\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"\/>/s' "$MANIFEST"
 fi
 
 echo "==> Disabling backup (android:allowBackup=\"false\")"
@@ -75,6 +75,8 @@ grep -Eqr 'minSdk[[:space:]]*=[[:space:]]*23|minSdkVersion[[:space:]]+23' "$APP"
   || { echo "MISSING: minSdk=23" >&2; fail=1; }
 grep -q "android.permission.INTERNET" "$MANIFEST" \
   || { echo "MISSING: INTERNET (needed for live charts)" >&2; fail=1; }
+grep -q "android.permission.CAMERA" "$MANIFEST" \
+  || { echo "MISSING: CAMERA (needed to scan the desktop pairing QR)" >&2; fail=1; }
 if [ "$fail" -ne 0 ]; then
   echo "ERROR: Android hardening did not fully apply — failing the build." >&2
   exit 1

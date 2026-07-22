@@ -82,6 +82,46 @@ class SyncClient extends ChangeNotifier {
     await connect();
   }
 
+  /// Set the sync target directly from a completed pairing (host/port/key),
+  /// persist it, then connect. Used after the secure QR handshake succeeds.
+  Future<void> setTarget({
+    required String host,
+    required int port,
+    required String key,
+  }) async {
+    _host = host;
+    _port = port;
+    _key = key;
+    lastUri = 'nqe://sync?host=$host&port=$port&key=$key';
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_prefsUriKey, lastUri!);
+    } catch (_) {
+      // Persistence is best-effort; connecting still works this session.
+    }
+    await connect();
+  }
+
+  /// True once a pairing target has been saved (used to gate desktop first-run).
+  Future<bool> isPaired() async {
+    if (lastUri != null) return true;
+    return loadSaved();
+  }
+
+  /// Forget the saved pairing so the desktop returns to first-run pairing.
+  Future<void> unpair() async {
+    disconnect();
+    _host = null;
+    _port = null;
+    _key = null;
+    lastUri = null;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_prefsUriKey);
+    } catch (_) {/* ignore */}
+    notifyListeners();
+  }
+
   /// Load the saved pairing URI (if any) without connecting. Returns true if a
   /// URI was found, so the caller (desktop shell) can decide to auto-connect.
   Future<bool> loadSaved() async {

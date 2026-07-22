@@ -50,6 +50,14 @@ dependencies:
   window_manager: ^0.4.3
   windows_single_instance: ^1.0.1
 
+  # v2 pairing: phone scans the desktop's QR to pair (camera).
+  mobile_scanner: ^5.2.3
+
+  # v2 desktop parity: embedded web view for the Live tab (WebView2) with an
+  # open-in-browser fallback via url_launcher.
+  webview_windows: ^0.4.0
+  url_launcher: ^6.3.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

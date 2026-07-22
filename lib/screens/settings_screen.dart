@@ -1,5 +1,8 @@
 // Settings: appearance (day/night, persisted), security (lock + biometric +
-// PIN), encrypted backup/restore, and about.
+// PIN), device sync, encrypted backup/restore, and about.
+import 'dart:io' show Platform;
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import 'package:flutter/services.dart';
@@ -9,9 +12,14 @@ import '../services/auth_service.dart';
 import '../services/backup_service.dart';
 import '../services/crypto_service.dart';
 import '../state/app_state.dart';
+import '../sync/sync_client.dart';
+import '../sync/sync_server.dart';
 import '../theme.dart';
+import '../widgets/connection_watcher.dart';
 import 'about_screen.dart';
+import 'desktop/pairing_screen.dart';
 import 'developer_screen.dart';
+import 'pair_desktop_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -28,9 +36,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _hasPin = false;
   bool _canBio = false;
   bool _busy = false;
+  bool _syncBusy = false;
   bool _devMode = false;
   String _exportPass = '';
   static const _kDevMode = 'developer_mode';
+
+  static final bool _isDesktop =
+      !kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS);
 
   @override
   void initState() {
@@ -162,6 +174,65 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
     await _auth.setBiometricEnabled(on);
     await _loadSecurity();
+  }
+
+  // ---- Device Sync ----
+  Future<void> _toggleServer(bool on) async {
+    setState(() => _syncBusy = true);
+    try {
+      if (on) {
+        await SyncServer.instance.start();
+        if (SyncServer.instance.status == SyncStatus.error) {
+          _snack(SyncServer.instance.lastError ?? 'Could not start sync server');
+        }
+      } else {
+        await SyncServer.instance.stop();
+      }
+    } catch (e) {
+      _snack('Sync error: $e');
+    } finally {
+      if (mounted) setState(() => _syncBusy = false);
+    }
+  }
+
+  Future<void> _openPairDesktop() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const PairDesktopScreen()),
+    );
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _rePairDesktop() async {
+    final pal = context.nqe;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: pal.surface,
+        title: Text('Re-pair this desktop?', style: TextStyle(color: pal.textHi)),
+        content: Text(
+          'This forgets the current phone pairing and shows the QR again so you '
+          'can scan it from your phone. Your local data is kept.',
+          style: TextStyle(color: pal.textLo),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Re-pair')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await SyncClient.instance.unpair();
+    if (!mounted) return;
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => DesktopPairingScreen(
+        onPaired: () => Navigator.of(context).maybePop(),
+      ),
+    ));
+    if (mounted) setState(() {});
   }
 
   // ---- Backup ----
@@ -369,6 +440,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ]),
               const SizedBox(height: 20),
+              _sectionLabel('Device Sync', pal),
+              _deviceSyncSection(pal),
+              const SizedBox(height: 20),
               _sectionLabel('Backup', pal),
               _card(pal, [
                 ListTile(
@@ -448,6 +522,73 @@ class _SettingsScreenState extends State<SettingsScreen> {
           );
         },
       ),
+    );
+  }
+
+  // Mobile: run the LAN server + offer "Pair Desktop Device". Desktop: show the
+  // sync connection and a re-pair action (the desktop is the client).
+  Widget _deviceSyncSection(NqePalette pal) {
+    if (_isDesktop) {
+      return ListenableBuilder(
+        listenable: SyncClient.instance,
+        builder: (context, _) {
+          final c = SyncClient.instance;
+          return _card(pal, [
+            ListTile(
+              leading: Icon(Icons.sync, color: pal.textHi),
+              title: Text('Sync status', style: TextStyle(color: pal.textHi)),
+              subtitle: Text(c.statusMessage ?? 'Paired with your phone',
+                  style: TextStyle(color: pal.textLo, fontSize: 12)),
+              trailing: ConnectionWatcher(c.state, attempt: c.attempt),
+            ),
+            _divider(pal),
+            ListTile(
+              leading: Icon(Icons.qr_code_scanner, color: pal.textHi),
+              title:
+                  Text('Re-pair device', style: TextStyle(color: pal.textHi)),
+              subtitle: Text('Show the QR again to scan from your phone',
+                  style: TextStyle(color: pal.textLo, fontSize: 12)),
+              trailing: Icon(Icons.chevron_right, color: pal.textLo),
+              onTap: _rePairDesktop,
+            ),
+          ]);
+        },
+      );
+    }
+
+    // Mobile.
+    return ListenableBuilder(
+      listenable: SyncServer.instance,
+      builder: (context, _) {
+        final s = SyncServer.instance;
+        final running = s.isRunning;
+        return _card(pal, [
+          SwitchListTile(
+            secondary: Icon(Icons.wifi_tethering, color: pal.textHi),
+            title: Text('LAN Sync Server', style: TextStyle(color: pal.textHi)),
+            subtitle: Text(
+              running
+                  ? 'Running · ${s.host ?? '—'}:${s.port} · ${s.connectedPeers} connected'
+                  : 'Off — turn on to let your desktop pair & sync',
+              style: TextStyle(color: pal.textLo, fontSize: 12),
+            ),
+            value: running,
+            onChanged: _syncBusy ? null : _toggleServer,
+          ),
+          if (running) ...[
+            _divider(pal),
+            ListTile(
+              leading: Icon(Icons.qr_code_scanner, color: pal.textHi),
+              title: Text('Pair Desktop Device',
+                  style: TextStyle(color: pal.textHi)),
+              subtitle: Text('Scan the QR shown on your desktop app',
+                  style: TextStyle(color: pal.textLo, fontSize: 12)),
+              trailing: Icon(Icons.chevron_right, color: pal.textLo),
+              onTap: _openPairDesktop,
+            ),
+          ],
+        ]);
+      },
     );
   }
 

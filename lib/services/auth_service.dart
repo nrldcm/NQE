@@ -145,6 +145,45 @@ class AuthService {
   /// right length instead of guessing on every keypress.
   Future<int> pinLength() async => (await _prefs).getInt(_kPinLen) ?? 0;
 
+  /// The PBKDF2 iteration count baked into every hash. Exposed so a paired
+  /// device can mirror the exact derivation parameters.
+  int get pbkdf2Iterations => _pbkdf2Iterations;
+
+  /// Export the PIN credential (hash + salt + length + iterations) for secure
+  /// transfer to a paired desktop. Returns null when no PIN is set. The hash is
+  /// already a slow PBKDF2 digest — never the PIN itself — so this is safe to
+  /// hand over the (separately encrypted) pairing channel.
+  Future<Map<String, dynamic>?> exportPinCredential() async {
+    final prefs = await _prefs;
+    final hash = prefs.getString(_kPinHash) ?? '';
+    final salt = prefs.getString(_kPinSalt) ?? '';
+    final len = prefs.getInt(_kPinLen) ?? 0;
+    if (hash.isEmpty || salt.isEmpty || len <= 0) return null;
+    return {
+      'hash': hash,
+      'salt': salt,
+      'len': len,
+      'iter': _pbkdf2Iterations,
+    };
+  }
+
+  /// Adopt a PIN credential mirrored from a paired phone so this device unlocks
+  /// with the exact same PIN. The derivation (algorithm, iterations, salt) is
+  /// identical across builds, so verifying a typed PIN against the imported
+  /// hash Just Works. Enables the lock as a side effect.
+  Future<void> importPinCredential({
+    required String hash,
+    required String salt,
+    required int len,
+  }) async {
+    final prefs = await _prefs;
+    await prefs.setString(_kPinHash, hash);
+    await prefs.setString(_kPinSalt, salt);
+    await prefs.setInt(_kPinLen, len);
+    await prefs.setBool(_kLockEnabled, true);
+    await _clearFailures();
+  }
+
   Future<void> clearPin() async {
     final prefs = await _prefs;
     await prefs.remove(_kPinSalt);

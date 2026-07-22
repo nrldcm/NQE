@@ -9,7 +9,6 @@ import '../services/crypto_service.dart';
 import '../theme.dart';
 import '../util.dart';
 import 'editors/editor_scaffold.dart';
-import 'sync_screen.dart';
 
 const List<String> kProviders = [
   'TradingView',
@@ -83,24 +82,6 @@ class _DeveloperScreenState extends State<DeveloperScreen> {
           : ListView(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 90),
               children: [
-                Container(
-                  margin: const EdgeInsets.only(bottom: 16),
-                  decoration: BoxDecoration(
-                    color: pal.surface,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: pal.line),
-                  ),
-                  child: ListTile(
-                    leading: Icon(Icons.sync, color: pal.textHi),
-                    title: Text('Device Sync (LAN)',
-                        style: TextStyle(color: pal.textHi)),
-                    subtitle: Text('Sync with the desktop app over Wi-Fi',
-                        style: TextStyle(color: pal.textLo, fontSize: 12)),
-                    trailing: Icon(Icons.chevron_right, color: pal.textLo),
-                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => const SyncScreen())),
-                  ),
-                ),
                 Container(
                   padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(

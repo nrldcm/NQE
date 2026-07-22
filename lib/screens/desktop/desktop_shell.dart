@@ -1,10 +1,9 @@
-// Desktop shell — the same NQE app in "client mode". A fluid, responsive
-// layout with a left NavigationRail (Dashboard / Books / Stats / Sync) and a
-// top bar carrying the app title and a live LAN-sync connection glyph. The body
-// reuses the existing mobile screens verbatim so there is a single source of
-// truth for the presentation. Light/dark follows the shared themeController.
-import 'dart:async';
-
+// Desktop shell — the NQE app in "client mode", with full feature parity with
+// the phone: Home / Books / Live / Stats / Settings, plus a live LAN-sync glyph
+// in the top bar. First run shows secure QR pairing; after that the app gates
+// on the (phone-mirrored) PIN lock before revealing the shell. The body reuses
+// the existing mobile screens verbatim so there is a single source of truth for
+// the presentation. Light/dark follows the shared themeController.
 import 'package:flutter/material.dart';
 
 import '../../services/auth_service.dart';
@@ -15,12 +14,13 @@ import '../../widgets/connection_watcher.dart';
 import '../../widgets/nqe_logo.dart';
 import '../books_screen.dart';
 import '../dashboard_screen.dart';
+import '../settings_screen.dart';
 import '../stats_screen.dart';
+import 'desktop_live.dart';
 import 'desktop_lock.dart';
-import 'sync_panel.dart';
+import 'pairing_screen.dart';
 
-/// Root desktop application. Mirrors [NqeApp] but targets the desktop shell and
-/// carries the desktop-specific title. Theme is driven by [themeController].
+/// Root desktop application. Mirrors [NqeApp] but targets the desktop shell.
 class DesktopApp extends StatelessWidget {
   const DesktopApp({super.key});
 
@@ -42,8 +42,8 @@ class DesktopApp extends StatelessWidget {
   }
 }
 
-/// Loads app state, kicks off LAN auto-connect and gates on the app lock before
-/// revealing the shell. Fails CLOSED — a configured lock is always shown first.
+/// Loads state, then routes: not-paired → pairing; paired + locked → lock;
+/// otherwise → the shell. Fails CLOSED on the lock.
 class _DesktopBootstrap extends StatefulWidget {
   const _DesktopBootstrap();
 
@@ -53,6 +53,7 @@ class _DesktopBootstrap extends StatefulWidget {
 
 class _DesktopBootstrapState extends State<_DesktopBootstrap> {
   bool _ready = false;
+  bool _paired = false;
   bool _locked = false;
   bool _unlocked = false;
 
@@ -63,29 +64,30 @@ class _DesktopBootstrapState extends State<_DesktopBootstrap> {
   }
 
   Future<void> _boot() async {
-    bool locked = false;
     try {
-      // Populate the reused screens.
       await appState.load();
     } catch (_) {
       // Non-fatal — the shell will simply show empty state.
     }
 
+    bool paired = false;
     try {
-      // Auto-connect to the paired mobile if a pairing URI was saved before.
-      // Await the load so the decision is deterministic (the constructor's
-      // hydrate is fire-and-forget and may not have completed yet).
-      final hasPairing = await SyncClient.instance.loadSaved();
-      if (hasPairing) {
-        // Fire-and-forget — the connection state surfaces via ConnectionWatcher.
-        unawaited(SyncClient.instance.connect());
-      }
+      paired = await SyncClient.instance.isPaired();
     } catch (_) {
-      // Ignore — sync is best-effort.
+      paired = false;
     }
 
+    if (paired) {
+      // Auto-connect to the paired phone; state surfaces via ConnectionWatcher.
+      try {
+        SyncClient.instance.connect();
+      } catch (_) {/* best-effort */}
+    }
+
+    bool locked = false;
     try {
-      locked = await AuthService.instance.lockEnabled() &&
+      locked = paired &&
+          await AuthService.instance.lockEnabled() &&
           await AuthService.instance.hasUsableFactor();
     } catch (_) {
       locked = false;
@@ -93,9 +95,19 @@ class _DesktopBootstrapState extends State<_DesktopBootstrap> {
 
     if (!mounted) return;
     setState(() {
+      _paired = paired;
       _locked = locked;
       _ready = true;
     });
+  }
+
+  void _onPaired() {
+    // Re-run boot so the lock (now mirrored from the phone) is applied.
+    setState(() {
+      _ready = false;
+      _unlocked = false;
+    });
+    _boot();
   }
 
   @override
@@ -124,10 +136,12 @@ class _DesktopBootstrapState extends State<_DesktopBootstrap> {
       );
     }
 
+    if (!_paired) {
+      return DesktopPairingScreen(onPaired: _onPaired);
+    }
+
     if (_locked && !_unlocked) {
-      return DesktopLock(
-        onUnlocked: () => setState(() => _unlocked = true),
-      );
+      return DesktopLock(onUnlocked: () => setState(() => _unlocked = true));
     }
     return const DesktopShell();
   }
@@ -145,7 +159,7 @@ class DesktopShell extends StatefulWidget {
 class _DesktopShellState extends State<DesktopShell> {
   int _index = 0;
 
-  static const _titles = ['Dashboard', 'Books', 'Statistics', 'Sync'];
+  static const _titles = ['Dashboard', 'Books', 'Live', 'Statistics', 'Settings'];
 
   Widget _panel(int i) {
     switch (i) {
@@ -154,9 +168,11 @@ class _DesktopShellState extends State<DesktopShell> {
       case 1:
         return const BooksScreen();
       case 2:
+        return const DesktopLiveScreen();
+      case 3:
         return const StatsScreen();
       default:
-        return const SyncPanel();
+        return const SettingsScreen();
     }
   }
 
@@ -168,7 +184,6 @@ class _DesktopShellState extends State<DesktopShell> {
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
-            // Give the rail room to show labels on wider windows.
             final extended = constraints.maxWidth >= 1100;
             return Row(
               children: [
@@ -248,7 +263,7 @@ class _NavRail extends StatelessWidget {
         NavigationRailDestination(
           icon: Icon(Icons.dashboard_outlined),
           selectedIcon: Icon(Icons.dashboard),
-          label: Text('Dashboard'),
+          label: Text('Home'),
         ),
         NavigationRailDestination(
           icon: Icon(Icons.account_balance_wallet_outlined),
@@ -256,14 +271,19 @@ class _NavRail extends StatelessWidget {
           label: Text('Books'),
         ),
         NavigationRailDestination(
+          icon: Icon(Icons.candlestick_chart_outlined),
+          selectedIcon: Icon(Icons.candlestick_chart),
+          label: Text('Live'),
+        ),
+        NavigationRailDestination(
           icon: Icon(Icons.insights_outlined),
           selectedIcon: Icon(Icons.insights),
           label: Text('Stats'),
         ),
         NavigationRailDestination(
-          icon: Icon(Icons.sync_outlined),
-          selectedIcon: Icon(Icons.sync),
-          label: Text('Sync'),
+          icon: Icon(Icons.settings_outlined),
+          selectedIcon: Icon(Icons.settings),
+          label: Text('Settings'),
         ),
       ],
     );
@@ -293,11 +313,12 @@ class _TopBar extends StatelessWidget {
             ),
           ),
           const Spacer(),
-          // Live connection glyph — rebuilds as the sync state changes.
           ListenableBuilder(
             listenable: SyncClient.instance,
-            builder: (context, _) =>
-                ConnectionWatcher(SyncClient.instance.state),
+            builder: (context, _) => ConnectionWatcher(
+              SyncClient.instance.state,
+              attempt: SyncClient.instance.attempt,
+            ),
           ),
         ],
       ),

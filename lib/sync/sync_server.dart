@@ -28,9 +28,11 @@ import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_web_socket/shelf_web_socket.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import '../services/auth_service.dart';
 import '../services/crypto_service.dart';
 import '../state/app_state.dart';
 import 'foreground.dart';
+import 'pairing.dart';
 import 'sync_engine.dart';
 import 'sync_repo.dart';
 
@@ -77,6 +79,28 @@ class SyncServer extends ChangeNotifier {
   String get pairingKey => _pairingKey;
 
   bool get isRunning => status == SyncStatus.running;
+
+  /// Build the secure pairing payload handed to a desktop during pairing: the
+  /// reachable sync endpoint + key, plus the phone's PIN credential so the
+  /// desktop unlocks with the same PIN. Starts the server if needed so the
+  /// host/port/key are valid. Returns null if the server can't be started (e.g.
+  /// no Wi-Fi address). This object is sealed with AES-GCM by [Pairing] before
+  /// it ever leaves the device.
+  Future<PairingPayload?> buildPairingPayload() async {
+    if (!isRunning) await start();
+    final h = host;
+    if (h == null || h.isEmpty || _pairingKey.isEmpty) return null;
+    final pin = await AuthService.instance.exportPinCredential();
+    return PairingPayload(
+      syncHost: h,
+      syncPort: port,
+      syncKey: _pairingKey,
+      pinHash: pin?['hash'] as String?,
+      pinSalt: pin?['salt'] as String?,
+      pinLen: (pin?['len'] as int?) ?? 0,
+      pinIterations: (pin?['iter'] as int?) ?? 0,
+    );
+  }
 
   /// Start the LAN WebSocket server. Idempotent: a no-op while already running.
   Future<void> start() async {
