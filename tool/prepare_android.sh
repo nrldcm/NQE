@@ -18,9 +18,9 @@ flutter create . --platforms=android --org "$ORG" --project-name nqe
 APP="android/app"
 MANIFEST="$APP/src/main/AndroidManifest.xml"
 
-echo "==> Injecting permissions (biometric + internet for live charts)"
+echo "==> Injecting permissions (biometric, internet, LAN-sync foreground service)"
 if ! grep -q "USE_BIOMETRIC" "$MANIFEST"; then
-  perl -0pi -e 's/(<manifest[^>]*>)/$1\n    <uses-permission android:name="android.permission.USE_BIOMETRIC"\/>\n    <uses-permission android:name="android.permission.INTERNET"\/>/s' "$MANIFEST"
+  perl -0pi -e 's/(<manifest[^>]*>)/$1\n    <uses-permission android:name="android.permission.USE_BIOMETRIC"\/>\n    <uses-permission android:name="android.permission.INTERNET"\/>\n    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"\/>\n    <uses-permission android:name="android.permission.WAKE_LOCK"\/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"\/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"\/>\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"\/>/s' "$MANIFEST"
 fi
 
 echo "==> Disabling backup (android:allowBackup=\"false\")"

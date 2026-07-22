@@ -36,6 +36,14 @@ dependencies:
   webview_flutter: ^4.10.0
   webview_flutter_android: ^4.3.0
 
+  # v2: LAN device sync — mobile runs the server; desktop connects.
+  shelf: ^1.4.1
+  shelf_web_socket: ^2.0.0
+  web_socket_channel: ^3.0.1
+  network_info_plus: ^6.1.0
+  qr_flutter: ^4.1.0
+  flutter_foreground_task: ^8.17.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
