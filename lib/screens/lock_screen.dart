@@ -32,8 +32,8 @@ class _LockScreenState extends State<LockScreen> {
   bool _canBio = false;
   bool _error = false;
   int _lockRemaining = 0;
+  int _pinLen = 4;
   Timer? _ticker;
-  final int _pinMax = 6;
 
   @override
   void initState() {
@@ -51,10 +51,14 @@ class _LockScreenState extends State<LockScreen> {
 
   Future<void> _prepare() async {
     _hasPin = await _auth.hasPin();
+    _pinLen = await _auth.pinLength();
+    if (_pinLen < 4 || _pinLen > 6) _pinLen = _hasPin ? 4 : 4;
     final bioEnabled = await _auth.biometricEnabled();
     _canBio = bioEnabled && await _auth.canUseBiometrics();
     await _refreshLockout();
     if (mounted) setState(() {});
+    // Don't prompt biometrics while locked out.
+    if (_lockRemaining > 0) return;
     // Auto-prompt the OS on open when biometrics are on, OR — to fail closed —
     // whenever there is no in-app PIN configured (forces device credential).
     if (_canBio || !_hasPin) _tryBiometric();
@@ -75,6 +79,12 @@ class _LockScreenState extends State<LockScreen> {
   }
 
   Future<void> _tryBiometric() async {
+    // No biometric/face prompt while the app is in a lockout ("waiting") state.
+    if (await _auth.lockoutRemaining() > 0) {
+      await _refreshLockout();
+      if (mounted) setState(() {});
+      return;
+    }
     final ok = await _auth.authenticateBiometric();
     if (ok) _unlock();
   }
@@ -98,17 +108,20 @@ class _LockScreenState extends State<LockScreen> {
 
   Future<void> _onDigit(String d) async {
     if (_lockRemaining > 0) return;
-    if (_entered.length >= _pinMax) return;
+    if (_entered.length >= _pinLen) return;
     HapticFeedback.selectionClick();
     setState(() {
       _entered += d;
       _error = false;
     });
-    if (_entered.length >= 4) {
+    // Only verify a COMPLETE PIN — never partial entries (which would spam the
+    // failure counter and trigger a false lockout even for the right PIN).
+    if (_entered.length == _pinLen) {
       final ok = await _auth.submitPin(_entered);
+      if (!mounted) return;
       if (ok) {
         _unlock();
-      } else if (_entered.length >= _pinMax) {
+      } else {
         HapticFeedback.heavyImpact();
         await _refreshLockout();
         if (!mounted) return;
@@ -185,7 +198,7 @@ class _LockScreenState extends State<LockScreen> {
   Widget _dots(NqePalette pal) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
-      children: List.generate(_pinMax, (i) {
+      children: List.generate(_pinLen, (i) {
         final filled = i < _entered.length;
         return Container(
           margin: const EdgeInsets.symmetric(horizontal: 7),
@@ -219,7 +232,8 @@ class _LockScreenState extends State<LockScreen> {
         childAspectRatio: 1.5,
         children: keys.map((k) {
           if (k == 'bio') {
-            return _canBio
+            // Hide the biometric key while locked out.
+            return (_canBio && _lockRemaining == 0)
                 ? _keyButton(
                     pal,
                     child: Icon(Icons.fingerprint, color: pal.textHi, size: 26),

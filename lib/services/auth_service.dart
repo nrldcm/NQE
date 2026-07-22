@@ -25,6 +25,7 @@ class AuthService {
   static const _kBiometricEnabled = 'biometric_enabled';
   static const _kPinHash = 'pin_hash';
   static const _kPinSalt = 'pin_salt';
+  static const _kPinLen = 'pin_len';
   static const _kFails = 'pin_fails';
   static const _kLockUntil = 'pin_lock_until';
 
@@ -134,13 +135,21 @@ class AuthService {
     final hash = await _hash(pin, salt);
     await prefs.setString(_kPinSalt, salt);
     await prefs.setString(_kPinHash, hash);
+    // Store the length (not sensitive) so the lock screen only checks a
+    // *complete* PIN — never partial entries, which would spam the counter.
+    await prefs.setInt(_kPinLen, pin.length);
     await _clearFailures();
   }
+
+  /// The configured PIN length (0 if none). Lets the keypad auto-submit at the
+  /// right length instead of guessing on every keypress.
+  Future<int> pinLength() async => (await _prefs).getInt(_kPinLen) ?? 0;
 
   Future<void> clearPin() async {
     final prefs = await _prefs;
     await prefs.remove(_kPinSalt);
     await prefs.remove(_kPinHash);
+    await prefs.remove(_kPinLen);
     await _clearFailures();
   }
 

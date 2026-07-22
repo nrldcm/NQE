@@ -206,65 +206,57 @@ class _StatsBody extends StatelessWidget {
       if (worst == null || s.pnl < worst.pnl) worst = s;
     }
 
+    // Uniform, equal-size cards (grid) — never uneven rows.
+    final cards = <Widget>[
+      StatCard(
+        label: 'Realized P/L',
+        value: signedMoney(metrics.realizedPnl, currency: a.currency),
+        valueColor: NqeColors.pnl(metrics.realizedPnl),
+        icon: Icons.trending_up,
+      ),
+      StatCard(
+        label: 'Win rate',
+        value: pct(metrics.winRate),
+        sub: '${metrics.wins}W / ${metrics.losses}L',
+        icon: Icons.percent,
+      ),
+      StatCard(
+        label: 'Closed trades',
+        value: '${metrics.closedTrades}',
+        sub: '${metrics.openTrades} open',
+        icon: Icons.check_circle_outline,
+      ),
+      StatCard(
+        label: 'Best month',
+        value: best == null || best.pnl == 0
+            ? '—'
+            : signedMoney(best.pnl, currency: a.currency),
+        sub: best == null || best.pnl == 0 ? null : best.label,
+        valueColor: best == null ? null : NqeColors.pnl(best.pnl),
+        icon: Icons.emoji_events_outlined,
+      ),
+      if (worst != null && worst.pnl < 0)
+        StatCard(
+          label: 'Worst month',
+          value: signedMoney(worst.pnl, currency: a.currency),
+          sub: worst.label,
+          valueColor: NqeColors.pnl(worst.pnl),
+          icon: Icons.trending_down,
+        ),
+    ];
+
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 32),
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: StatCard(
-                label: 'Realized P/L',
-                value: signedMoney(metrics.realizedPnl, currency: a.currency),
-                valueColor: NqeColors.pnl(metrics.realizedPnl),
-                icon: Icons.trending_up,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: StatCard(
-                label: 'Win rate',
-                value: pct(metrics.winRate),
-                sub: '${metrics.wins}W / ${metrics.losses}L',
-                icon: Icons.percent,
-              ),
-            ),
-          ],
+        GridView.count(
+          crossAxisCount: 2,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          crossAxisSpacing: 12,
+          mainAxisSpacing: 12,
+          childAspectRatio: 1.55,
+          children: cards,
         ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: StatCard(
-                label: 'Closed trades',
-                value: '${metrics.closedTrades}',
-                sub: '${metrics.openTrades} open',
-                icon: Icons.check_circle_outline,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: StatCard(
-                label: 'Best month',
-                value: best == null || best.pnl == 0
-                    ? '—'
-                    : signedMoney(best.pnl, currency: a.currency),
-                sub: best == null || best.pnl == 0 ? null : best.label,
-                valueColor: best == null ? null : NqeColors.pnl(best.pnl),
-                icon: Icons.emoji_events_outlined,
-              ),
-            ),
-          ],
-        ),
-        if (worst != null && worst.pnl < 0) ...[
-          const SizedBox(height: 12),
-          StatCard(
-            label: 'Worst month',
-            value: signedMoney(worst.pnl, currency: a.currency),
-            sub: worst.label,
-            valueColor: NqeColors.pnl(worst.pnl),
-            icon: Icons.trending_down,
-          ),
-        ],
         const SizedBox(height: 20),
         MonthlyPnlChart(months),
         const SizedBox(height: 16),
