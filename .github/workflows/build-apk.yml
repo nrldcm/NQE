@@ -2,7 +2,7 @@ name: Build & Release APK
 
 on:
   push:
-    branches: [main, v2-live-trading]
+    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
 
@@ -115,23 +115,6 @@ jobs:
             Automatic build of NQE from the latest commit on `main`.
             Install `NQE-latest.apk` on your Android device.
             (You may need to allow "install from unknown sources".)
-          files: dist/*.apk
-          prerelease: true
-
-      # Preview release on the feature branch so the APK can be side-loaded &
-      # tested before it is merged to main. This is STILL version 1 — the
-      # "preview" channel just carries the newest 1.x feature build.
-      - name: Publish preview (apk)
-        if: github.ref == 'refs/heads/v2-live-trading'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: preview
-          name: NQE — preview (v1, unstable)
-          body: |
-            Preview build of NQE v${{ steps.ver.outputs.version }} — Funds
-            managed by Willong Capital. Still version 1; includes the Live tab,
-            Developer Mode, and secure device pairing / LAN sync. For testing
-            only — not a stable release.
           files: dist/*.apk
           prerelease: true
 
