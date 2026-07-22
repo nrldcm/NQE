@@ -48,19 +48,18 @@ jobs:
       - name: Get packages
         run: flutter pub get --enforce-lockfile
 
+      # Read the version straight from pubspec — portable across Git Bash on
+      # Windows (no gh CLI / pipefail pitfalls). The desktop build is a preview,
+      # so the pubspec version is the right source of truth here.
       - name: Compute version
         id: ver
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          latest=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 200 \
-            --json tagName -q '.[].tagName' 2>/dev/null \
-            | grep -E '^v1\.[0-9]+\.0$' | sed -E 's/^v1\.([0-9]+)\.0$/\1/' \
-            | sort -n | tail -1)
-          next=$(( ${latest:-0} + 1 ))
-          echo "version=1.$next.0" >> "$GITHUB_OUTPUT"
-          echo "Version: 1.$next.0"
+          ver=$(grep -E '^version:' pubspec.yaml \
+            | sed -E 's/^version:[[:space:]]*([0-9]+\.[0-9]+\.[0-9]+).*/\1/')
+          ver=${ver:-1.1.0}
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          echo "Version: $ver"
 
       - name: Build Windows (release)
         run: >
