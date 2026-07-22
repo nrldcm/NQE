@@ -11,6 +11,7 @@ import '../services/crypto_service.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
 import 'about_screen.dart';
+import 'developer_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -27,13 +28,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _hasPin = false;
   bool _canBio = false;
   bool _busy = false;
+  bool _devMode = false;
   String _exportPass = '';
+  static const _kDevMode = 'developer_mode';
 
   @override
   void initState() {
     super.initState();
     _loadSecurity();
     _loadBackupPass();
+    _loadDevMode();
+  }
+
+  Future<void> _loadDevMode() async {
+    final prefs = await SharedPreferences.getInstance();
+    _devMode = prefs.getBool(_kDevMode) ?? false;
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _setDevMode(bool v) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_kDevMode, v);
+    _devMode = v;
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadBackupPass() async {
@@ -395,6 +412,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   onTap: () => Navigator.of(context).push(
                       MaterialPageRoute(builder: (_) => const AboutScreen())),
                 ),
+              ]),
+              const SizedBox(height: 20),
+              _sectionLabel('Developer', pal),
+              _card(pal, [
+                SwitchListTile(
+                  secondary: Icon(Icons.code, color: pal.textHi),
+                  title: Text('Developer Mode',
+                      style: TextStyle(color: pal.textHi)),
+                  subtitle: Text('Integrations & API keys',
+                      style: TextStyle(color: pal.textLo, fontSize: 12)),
+                  value: _devMode,
+                  onChanged: _setDevMode,
+                ),
+                if (_devMode) ...[
+                  _divider(pal),
+                  ListTile(
+                    leading: Icon(Icons.vpn_key_outlined, color: pal.textHi),
+                    title: Text('Integrations & API keys',
+                        style: TextStyle(color: pal.textHi)),
+                    subtitle: Text('Enter API keys used by live data / trading',
+                        style: TextStyle(color: pal.textLo, fontSize: 12)),
+                    trailing: Icon(Icons.chevron_right, color: pal.textLo),
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                        builder: (_) => const DeveloperScreen())),
+                  ),
+                ],
               ]),
               if (_busy)
                 const Padding(

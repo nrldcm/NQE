@@ -105,6 +105,19 @@ class CryptoService {
     return out.toBytes();
   }
 
+  /// Encrypt a small secret (e.g. an API key) into a base64 string suitable
+  /// for storing in SQLite. Decryptable only inside the app.
+  Future<String> encryptSecret(String value) async {
+    final bytes = await encryptJson({'v': value});
+    return base64Encode(bytes);
+  }
+
+  Future<String> decryptSecret(String b64) async {
+    final bytes = Uint8List.fromList(base64Decode(b64));
+    final json = await decryptJson(bytes);
+    return (json['v'] ?? '').toString();
+  }
+
   /// True if the container requires a passphrase to decrypt.
   bool isPassphraseProtected(Uint8List bytes) {
     if (bytes.length < _magic.length + 2) return false;

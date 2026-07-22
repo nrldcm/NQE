@@ -32,6 +32,17 @@ void main() {
     });
   });
 
+  group('API key secret encryption (v2)', () {
+    test('encryptSecret → decryptSecret round-trips, ciphertext hides value',
+        () async {
+      const secret = 'sk_live_ABCD1234efgh5678';
+      final enc = await CryptoService.instance.encryptSecret(secret);
+      expect(enc.contains(secret), isFalse); // not stored in clear
+      final back = await CryptoService.instance.decryptSecret(enc);
+      expect(back, secret);
+    });
+  });
+
   group('non-finite input is neutralised', () {
     test('Infinity/NaN never reach persisted maps', () {
       final t = Trade(

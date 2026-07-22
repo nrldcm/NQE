@@ -4,7 +4,7 @@
 // `fxRate` on individual foreign entries let the dashboard roll everything up
 // into one PHP "Assets Under Management" figure.
 
-const int kSchemaVersion = 1;
+const int kSchemaVersion = 2;
 
 String _s(Object? v, [String def = '']) => v == null ? def : v.toString();
 double _d(Object? v, [double def = 0]) {
@@ -303,6 +303,47 @@ class Holding {
         goalShares: _d(m['goal_shares']),
         currentShares: _d(m['current_shares']),
         avgPrice: _d(m['avg_price']),
+        createdAt: _s(m['created_at']),
+      );
+}
+
+/// A stored third-party integration credential. The secret itself is kept
+/// encrypted ([secretEnc]); only a short [hint] (last few chars) is ever shown.
+/// Deliberately NOT part of the ledger backup — integration keys stay on-device.
+class ApiKey {
+  String id;
+  String label; // user-facing name, e.g. "TradingView"
+  String service; // category, e.g. "tradingview" | "data" | "broker"
+  String secretEnc; // base64 AES-GCM ciphertext of the secret
+  String hint; // last 4 chars, for masked display
+  String createdAt;
+
+  ApiKey({
+    required this.id,
+    required this.label,
+    this.service = '',
+    required this.secretEnc,
+    this.hint = '',
+    required this.createdAt,
+  });
+
+  String get masked => '••••••${hint.isEmpty ? '' : ' $hint'}';
+
+  Map<String, Object?> toMap() => {
+        'id': id,
+        'label': label,
+        'service': service,
+        'secret_enc': secretEnc,
+        'hint': hint,
+        'created_at': createdAt,
+      };
+
+  factory ApiKey.fromMap(Map<String, Object?> m) => ApiKey(
+        id: _s(m['id']),
+        label: _s(m['label']),
+        service: _s(m['service']),
+        secretEnc: _s(m['secret_enc']),
+        hint: _s(m['hint']),
         createdAt: _s(m['created_at']),
       );
 }

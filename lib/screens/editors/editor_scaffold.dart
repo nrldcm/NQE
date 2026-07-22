@@ -93,6 +93,7 @@ class EditorField extends StatelessWidget {
   final TextInputType? keyboardType;
   final int maxLines;
   final String? hint;
+  final bool obscure;
   const EditorField({
     super.key,
     required this.label,
@@ -100,6 +101,7 @@ class EditorField extends StatelessWidget {
     this.keyboardType,
     this.maxLines = 1,
     this.hint,
+    this.obscure = false,
   });
 
   @override
@@ -109,7 +111,8 @@ class EditorField extends StatelessWidget {
       child: TextField(
         controller: controller,
         keyboardType: keyboardType,
-        maxLines: maxLines,
+        maxLines: obscure ? 1 : maxLines,
+        obscureText: obscure,
         decoration: InputDecoration(labelText: label, hintText: hint),
       ),
     );

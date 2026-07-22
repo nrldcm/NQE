@@ -90,6 +90,13 @@ class LedgerDb {
         'CREATE INDEX IF NOT EXISTS ix_dv_acct ON dividends(account_id, date)');
     batch.execute(
         'CREATE INDEX IF NOT EXISTS ix_hd_acct ON holdings(account_id)');
+    // v2: encrypted third-party integration credentials (device-only).
+    batch.execute('''
+      CREATE TABLE IF NOT EXISTS api_keys (
+        id TEXT PRIMARY KEY, label TEXT NOT NULL DEFAULT '',
+        service TEXT NOT NULL DEFAULT '', secret_enc TEXT NOT NULL DEFAULT '',
+        hint TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
+      )''');
     await batch.commit(noResult: true);
   }
 
@@ -193,6 +200,33 @@ class LedgerDb {
   Future<void> deleteHolding(String id) async {
     final d = await db;
     await d.delete('holdings', where: 'id = ?', whereArgs: [id]);
+  }
+
+  // ---- API keys (v2, encrypted, device-only) --------------------------------
+  Future<List<ApiKey>> apiKeys() async {
+    final d = await db;
+    final rows = await d.query('api_keys', orderBy: 'created_at DESC');
+    return rows.map(ApiKey.fromMap).toList();
+  }
+
+  Future<void> upsertApiKey(ApiKey k) async {
+    final d = await db;
+    await d.insert('api_keys', k.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> deleteApiKey(String id) async {
+    final d = await db;
+    await d.delete('api_keys', where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<ApiKey?> apiKeyForService(String service) async {
+    final d = await db;
+    final rows = await d.query('api_keys',
+        where: 'service = ?', whereArgs: [service], orderBy: 'created_at DESC',
+        limit: 1);
+    if (rows.isEmpty) return null;
+    return ApiKey.fromMap(rows.first);
   }
 
   // ---- Snapshot / import ----------------------------------------------------

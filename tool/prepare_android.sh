@@ -18,9 +18,9 @@ flutter create . --platforms=android --org "$ORG" --project-name nqe
 APP="android/app"
 MANIFEST="$APP/src/main/AndroidManifest.xml"
 
-echo "==> Injecting biometric permission (least privilege — no INTERNET)"
+echo "==> Injecting permissions (biometric + internet for live charts)"
 if ! grep -q "USE_BIOMETRIC" "$MANIFEST"; then
-  perl -0pi -e 's/(<manifest[^>]*>)/$1\n    <uses-permission android:name="android.permission.USE_BIOMETRIC"\/>/s' "$MANIFEST"
+  perl -0pi -e 's/(<manifest[^>]*>)/$1\n    <uses-permission android:name="android.permission.USE_BIOMETRIC"\/>\n    <uses-permission android:name="android.permission.INTERNET"\/>/s' "$MANIFEST"
 fi
 
 echo "==> Disabling backup (android:allowBackup=\"false\")"
@@ -73,9 +73,8 @@ grep -q "USE_BIOMETRIC" "$MANIFEST" || { echo "MISSING: USE_BIOMETRIC" >&2; fail
 grep -q 'android:allowBackup="false"' "$MANIFEST" || { echo "MISSING: allowBackup=false" >&2; fail=1; }
 grep -Eqr 'minSdk[[:space:]]*=[[:space:]]*23|minSdkVersion[[:space:]]+23' "$APP"/build.gradle* \
   || { echo "MISSING: minSdk=23" >&2; fail=1; }
-if grep -q "android.permission.INTERNET" "$MANIFEST"; then
-  echo "WARNING: INTERNET permission present (expected offline app)" >&2
-fi
+grep -q "android.permission.INTERNET" "$MANIFEST" \
+  || { echo "MISSING: INTERNET (needed for live charts)" >&2; fail=1; }
 if [ "$fail" -ne 0 ]; then
   echo "ERROR: Android hardening did not fully apply — failing the build." >&2
   exit 1

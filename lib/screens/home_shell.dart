@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../theme.dart';
 import 'books_screen.dart';
 import 'dashboard_screen.dart';
+import 'live_screen.dart';
 import 'settings_screen.dart';
 import 'stats_screen.dart';
 
@@ -20,6 +21,7 @@ class _HomeShellState extends State<HomeShell> {
   static const _tabs = [
     DashboardScreen(),
     BooksScreen(),
+    LiveScreen(),
     StatsScreen(),
     SettingsScreen(),
   ];
@@ -55,6 +57,8 @@ class _HomeShellState extends State<HomeShell> {
             _dest(Icons.dashboard_outlined, Icons.dashboard, 'Home', pal),
             _dest(Icons.account_balance_wallet_outlined,
                 Icons.account_balance_wallet, 'Books', pal),
+            _dest(Icons.candlestick_chart_outlined, Icons.candlestick_chart,
+                'Live', pal),
             _dest(Icons.insights_outlined, Icons.insights, 'Stats', pal),
             _dest(Icons.settings_outlined, Icons.settings, 'Settings', pal),
           ],
