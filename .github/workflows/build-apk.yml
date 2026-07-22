@@ -72,10 +72,17 @@ jobs:
       - name: Build APK (release)
         run: flutter build apk --release
 
+      - name: Read app version
+        id: ver
+        run: |
+          V=$(grep '^version:' pubspec.yaml | sed 's/version:[[:space:]]*//; s/+.*//')
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "App version: $V"
+
       - name: Rename APK
         run: |
           mkdir -p dist
-          cp build/app/outputs/flutter-apk/app-release.apk "dist/NQE-${GITHUB_SHA::7}.apk"
+          cp build/app/outputs/flutter-apk/app-release.apk "dist/NQE-v${{ steps.ver.outputs.version }}.apk"
           cp build/app/outputs/flutter-apk/app-release.apk dist/NQE-latest.apk
           ls -la dist
 
@@ -98,6 +105,20 @@ jobs:
             (You may need to allow "install from unknown sources".)
           files: dist/*.apk
           prerelease: true
+
+      # Distinct VERSIONED release (tag = pubspec version) on every main push.
+      # CI's token can create the tag/release even though local tag pushes are
+      # blocked by the environment proxy.
+      - name: Publish versioned release (main)
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: NQE v${{ steps.ver.outputs.version }}
+          body: |
+            NQE v${{ steps.ver.outputs.version }} — Funds managed by Willong Capital.
+            Install `NQE-v${{ steps.ver.outputs.version }}.apk`.
+          files: dist/*.apk
 
       # Versioned release when a v* tag is pushed.
       - name: Publish tagged release
