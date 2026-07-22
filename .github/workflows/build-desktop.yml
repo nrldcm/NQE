@@ -96,14 +96,23 @@ jobs:
         with:
           tag_name: latest
           name: NQE — latest build
-          files: "*.zip"
+          files: |
+            *.exe
+            *.zip
           prerelease: true
 
-      - name: Publish v2 preview (desktop)
+      # Preview desktop build (STILL version 1). Publishes the single-file .exe
+      # and the portable zip to the shared "preview" channel.
+      - name: Publish preview (desktop)
         if: github.ref == 'refs/heads/v2-live-trading'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2-preview
-          name: NQE v2 — preview (unstable)
-          files: "*.zip"
+          tag_name: preview
+          name: NQE — preview (v1, unstable)
+          body: |
+            Preview desktop build of NQE v${{ steps.ver.outputs.version }}.
+            Still version 1. Download the single-file `NQE-v${{ steps.ver.outputs.version }}.exe`.
+          files: |
+            *.exe
+            *.zip
           prerelease: true

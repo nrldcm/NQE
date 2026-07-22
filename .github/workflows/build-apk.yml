@@ -118,17 +118,20 @@ jobs:
           files: dist/*.apk
           prerelease: true
 
-      # Preview release on the v2 branch so the APK can be side-loaded & tested
-      # before v2 is merged to main.
-      - name: Publish v2 preview (apk)
+      # Preview release on the feature branch so the APK can be side-loaded &
+      # tested before it is merged to main. This is STILL version 1 — the
+      # "preview" channel just carries the newest 1.x feature build.
+      - name: Publish preview (apk)
         if: github.ref == 'refs/heads/v2-live-trading'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v2-preview
-          name: NQE v2 — preview (unstable)
+          tag_name: preview
+          name: NQE — preview (v1, unstable)
           body: |
-            Preview build of the NQE v2 branch (Live tab, Developer Mode, LAN
-            device sync). For testing only — not a stable release.
+            Preview build of NQE v${{ steps.ver.outputs.version }} — Funds
+            managed by Willong Capital. Still version 1; includes the Live tab,
+            Developer Mode, and secure device pairing / LAN sync. For testing
+            only — not a stable release.
           files: dist/*.apk
           prerelease: true
 
