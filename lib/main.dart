@@ -26,6 +26,7 @@ class NqeApp extends StatefulWidget {
 class _NqeAppState extends State<NqeApp> with WidgetsBindingObserver {
   final _navKey = GlobalKey<NavigatorState>();
   bool _backgrounded = false;
+  bool _relocking = false;
 
   @override
   void initState() {
@@ -52,15 +53,20 @@ class _NqeAppState extends State<NqeApp> with WidgetsBindingObserver {
 
   // Re-lock the app when it returns to the foreground after being backgrounded.
   Future<void> _maybeRelock() async {
-    if (lockScreenActive) return; // a lock is already showing
-    if (!await AuthService.instance.lockEnabled()) return;
-    if (!await AuthService.instance.hasUsableFactor()) return;
-    final nav = _navKey.currentState;
-    if (nav == null) return;
-    await nav.push(MaterialPageRoute(
-      builder: (_) => const LockScreen(resumeLock: true),
-      fullscreenDialog: true,
-    ));
+    if (_relocking || lockScreenActive) return; // don't stack lock screens
+    _relocking = true;
+    try {
+      if (!await AuthService.instance.lockEnabled()) return;
+      if (!await AuthService.instance.hasUsableFactor()) return;
+      final nav = _navKey.currentState;
+      if (nav == null) return;
+      await nav.push(MaterialPageRoute(
+        builder: (_) => const LockScreen(resumeLock: true),
+        fullscreenDialog: true,
+      ));
+    } finally {
+      _relocking = false;
+    }
   }
 
   @override

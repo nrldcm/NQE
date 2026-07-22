@@ -2,8 +2,7 @@
 // PIN), encrypted backup/restore, and about.
 import 'package:flutter/material.dart';
 
-import 'dart:typed_data';
-
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/auth_service.dart';
@@ -100,14 +99,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
               keyboardType: TextInputType.number,
               obscureText: true,
               maxLength: 6,
-              decoration: const InputDecoration(labelText: 'PIN (4–6 digits)'),
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              decoration: const InputDecoration(
+                  labelText: 'PIN (4–6 digits)', counterText: ''),
             ),
             TextField(
               controller: c2,
               keyboardType: TextInputType.number,
               obscureText: true,
               maxLength: 6,
-              decoration: const InputDecoration(labelText: 'Confirm PIN'),
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              decoration:
+                  const InputDecoration(labelText: 'Confirm PIN', counterText: ''),
             ),
           ],
         ),
@@ -124,7 +127,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (ok != true) return false;
     final p1 = c1.text.trim();
     final p2 = c2.text.trim();
-    if (p1.length < 4 || p1.length > 6 || p1 != p2) {
+    final digitsOnly = RegExp(r'^\d+$').hasMatch(p1);
+    if (p1.length < 4 || p1.length > 6 || p1 != p2 || !digitsOnly) {
       _snack('PINs must match and be 4–6 digits');
       return false;
     }

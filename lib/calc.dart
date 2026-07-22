@@ -163,15 +163,32 @@ class EquityPoint {
   EquityPoint(this.date, this.equity);
 }
 
-/// Cumulative equity after each closed trade (for the equity curve chart).
-List<EquityPoint> equityCurve(Account a, List<Trade> trades) {
-  final closed = trades.where((t) => !t.isOpen).toList()
-    ..sort((x, y) => x.date.compareTo(y.date));
+/// Cumulative equity over time — folds cashflows (deposits/withdrawals),
+/// closed-trade P&L, and dividends on their dates so the final point equals
+/// [AccountMetrics.equity] shown beside the chart.
+List<EquityPoint> equityCurve(
+  Account a,
+  List<Trade> trades, {
+  List<Cashflow> cashflows = const [],
+  List<Dividend> dividends = const [],
+}) {
+  final events = <MapEntry<String, double>>[];
+  for (final c in cashflows) {
+    events.add(MapEntry(c.date, (c.isDeposit ? 1 : -1) * c.amount));
+  }
+  for (final t in trades) {
+    if (!t.isOpen) events.add(MapEntry(t.date, t.pnl));
+  }
+  for (final d in dividends) {
+    events.add(MapEntry(d.date, d.netAmount));
+  }
+  events.sort((x, y) => x.key.compareTo(y.key));
+
   final pts = <EquityPoint>[EquityPoint(a.createdAt, a.startingCapital)];
   double eq = a.startingCapital;
-  for (final t in closed) {
-    eq += t.pnl;
-    pts.add(EquityPoint(t.date, eq));
+  for (final e in events) {
+    eq += e.value;
+    pts.add(EquityPoint(e.key, eq));
   }
   return pts;
 }

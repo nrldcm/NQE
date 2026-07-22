@@ -59,6 +59,11 @@ class _HoldingEditorState extends State<_HoldingEditor> {
   }
 
   Future<void> _save() async {
+    if (_stock.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Stock code is required')));
+      return;
+    }
     final h = widget.existing ??
         Holding(id: uid(), accountId: widget.accountId, createdAt: nowIso());
     h.stock = _stock.text.trim().toUpperCase();

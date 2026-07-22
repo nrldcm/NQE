@@ -135,21 +135,29 @@ class _BookTile extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 12),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      money(equity, currency: a.currency),
-                      style: TextStyle(
-                        color: pal.textHi,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: -0.3,
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 130),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerRight,
+                        child: Text(
+                          money(equity, currency: a.currency),
+                          maxLines: 1,
+                          style: TextStyle(
+                            color: pal.textHi,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -0.3,
+                          ),
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 2),
-                    PnlText(returnPct, signedPct(returnPct), size: 12),
-                  ],
+                      const SizedBox(height: 2),
+                      PnlText(returnPct, signedPct(returnPct), size: 12),
+                    ],
+                  ),
                 ),
                 const SizedBox(width: 4),
                 IconButton(

@@ -48,17 +48,25 @@ class _SplashScreenState extends State<SplashScreen>
     bool onboarded = false;
     bool lock = false;
 
+    // Decide the LOCK state FIRST and independently of data loading — a DB load
+    // error must never cause the lock to be skipped (fail closed, not open).
     try {
       final prefs = await SharedPreferences.getInstance();
       onboarded = prefs.getBool(kOnboardedKey) ?? false;
       if (onboarded) {
-        await appState.load();
         lock = await AuthService.instance.lockEnabled();
       }
     } catch (_) {
-      // Never hang on the splash — proceed to a safe destination even if boot
-      // hit an error. A returning user still reaches the app; a new user still
-      // reaches onboarding.
+      // If we can't even read prefs, treat as not-onboarded → onboarding
+      // (forces security setup; never lands on unlocked data).
+      onboarded = false;
+    }
+
+    // Load ledger data AFTER the lock decision. Failure here doesn't unlock.
+    if (onboarded) {
+      try {
+        await appState.load();
+      } catch (_) {/* data will retry in-app; lock state already decided */}
     }
 
     // Keep the splash visible briefly for a polished feel.

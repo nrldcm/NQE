@@ -229,7 +229,7 @@ class _OverviewTab extends StatelessWidget {
           physics: const NeverScrollableScrollPhysics(),
           crossAxisSpacing: 12,
           mainAxisSpacing: 12,
-          childAspectRatio: 1.55,
+          childAspectRatio: 1.4,
           children: [
             StatCard(
               label: 'Equity',
@@ -256,7 +256,9 @@ class _OverviewTab extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 16),
-        EquityCurveChart(equityCurve(account, trades),
+        EquityCurveChart(
+            equityCurve(account, trades,
+                cashflows: cashflows, dividends: dividends),
             currency: account.currency),
         const SizedBox(height: 16),
         WinLossDonut(wins: m.wins, losses: m.losses),
@@ -342,17 +344,21 @@ class _TradeRow extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    Text(
-                      trade.stock.isEmpty ? '—' : trade.stock,
-                      style: TextStyle(
-                        color: pal.textHi,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
+                    Flexible(
+                      child: Text(
+                        trade.stock.isEmpty ? '—' : trade.stock,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: pal.textHi,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
                     const SizedBox(width: 8),
                     if (trade.setup.trim().isNotEmpty)
-                      Pill(trade.setup, color: pal.textLo),
+                      Flexible(child: Pill(trade.setup, color: pal.textLo)),
                   ],
                 ),
                 const SizedBox(height: 4),
@@ -659,14 +665,19 @@ class _HoldingRow extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                holding.stock.isEmpty ? '—' : holding.stock,
-                style: TextStyle(
-                  color: pal.textHi,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
+              Flexible(
+                child: Text(
+                  holding.stock.isEmpty ? '—' : holding.stock,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: pal.textHi,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
+              const SizedBox(width: 8),
               Text(
                 '${num2(holding.currentShares)} / ${num2(holding.goalShares)}',
                 style: TextStyle(color: pal.textLo, fontSize: 12),
@@ -714,6 +725,8 @@ class _DividendRow extends StatelessWidget {
               children: [
                 Text(
                   dividend.stock.isEmpty ? '—' : dividend.stock,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: pal.textHi,
                     fontSize: 15,
@@ -723,6 +736,8 @@ class _DividendRow extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   '${shortDate(dividend.date)} · ${num2(dividend.shares)} sh',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(color: pal.textLo, fontSize: 12),
                 ),
               ],

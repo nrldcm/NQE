@@ -123,13 +123,18 @@ class _HeroCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 10),
-          Text(
-            money(appState.totalAumPhp, currency: 'PHP'),
-            style: TextStyle(
-              color: pal.textHi,
-              fontSize: 34,
-              fontWeight: FontWeight.w800,
-              letterSpacing: -1,
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              money(appState.totalAumPhp, currency: 'PHP'),
+              maxLines: 1,
+              style: TextStyle(
+                color: pal.textHi,
+                fontSize: 34,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -1,
+              ),
             ),
           ),
           const SizedBox(height: 18),
@@ -184,13 +189,18 @@ class _InlineStat extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 4),
-        Text(
-          value,
-          style: TextStyle(
-            color: valueColor,
-            fontSize: 18,
-            fontWeight: FontWeight.w800,
-            letterSpacing: -0.3,
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Text(
+            value,
+            maxLines: 1,
+            style: TextStyle(
+              color: valueColor,
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+              letterSpacing: -0.3,
+            ),
           ),
         ),
       ],
@@ -266,25 +276,37 @@ class _BookRow extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 12),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      money(equity, currency: a.currency),
-                      style: TextStyle(
-                        color: pal.textHi,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: -0.3,
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 150),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerRight,
+                        child: Text(
+                          money(equity, currency: a.currency),
+                          maxLines: 1,
+                          style: TextStyle(
+                            color: pal.textHi,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -0.3,
+                          ),
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 2),
-                    PnlText(
-                      realized,
-                      signedMoney(realized, currency: a.currency),
-                      size: 12,
-                    ),
-                  ],
+                      const SizedBox(height: 2),
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerRight,
+                        child: PnlText(
+                          realized,
+                          signedMoney(realized, currency: a.currency),
+                          size: 12,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),

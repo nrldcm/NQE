@@ -183,7 +183,7 @@ class _StatsBody extends StatelessWidget {
       const <Dividend>[],
     );
     final months = monthlyStats(a, data.cashflows, data.trades);
-    final curve = equityCurve(a, data.trades);
+    final curve = equityCurve(a, data.trades, cashflows: data.cashflows);
 
     // Best / worst month by realised P&L.
     MonthStat? best;
@@ -194,12 +194,13 @@ class _StatsBody extends StatelessWidget {
     }
 
     // Uniform, equal-size cards (grid) — never uneven rows.
+    // Order: Closed trades | Win rate  (top),  Realized P/L | Best month.
     final cards = <Widget>[
       StatCard(
-        label: 'Realized P/L',
-        value: signedMoney(metrics.realizedPnl, currency: a.currency),
-        valueColor: NqeColors.pnl(metrics.realizedPnl),
-        icon: Icons.trending_up,
+        label: 'Closed trades',
+        value: '${metrics.closedTrades}',
+        sub: '${metrics.openTrades} open',
+        icon: Icons.check_circle_outline,
       ),
       StatCard(
         label: 'Win rate',
@@ -208,10 +209,10 @@ class _StatsBody extends StatelessWidget {
         icon: Icons.percent,
       ),
       StatCard(
-        label: 'Closed trades',
-        value: '${metrics.closedTrades}',
-        sub: '${metrics.openTrades} open',
-        icon: Icons.check_circle_outline,
+        label: 'Realized P/L',
+        value: signedMoney(metrics.realizedPnl, currency: a.currency),
+        valueColor: NqeColors.pnl(metrics.realizedPnl),
+        icon: Icons.trending_up,
       ),
       StatCard(
         label: 'Best month',

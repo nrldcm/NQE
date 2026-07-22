@@ -189,6 +189,8 @@ class Pill extends StatelessWidget {
         border: Border.all(color: color.withOpacity(0.4)),
       ),
       child: Text(text,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
           style: TextStyle(
               color: color, fontSize: 11, fontWeight: FontWeight.w600)),
     );

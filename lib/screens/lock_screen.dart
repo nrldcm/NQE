@@ -52,7 +52,7 @@ class _LockScreenState extends State<LockScreen> {
   Future<void> _prepare() async {
     _hasPin = await _auth.hasPin();
     _pinLen = await _auth.pinLength();
-    if (_pinLen < 4 || _pinLen > 6) _pinLen = _hasPin ? 4 : 4;
+    if (_pinLen < 4 || _pinLen > 6) _pinLen = 4;
     final bioEnabled = await _auth.biometricEnabled();
     _canBio = bioEnabled && await _auth.canUseBiometrics();
     await _refreshLockout();

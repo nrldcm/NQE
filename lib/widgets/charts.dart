@@ -6,6 +6,12 @@ import '../calc.dart';
 import '../format.dart';
 import '../theme.dart';
 
+/// Readable label color on top of an arbitrary slice color.
+Color _sliceLabelColor(Color c) =>
+    ThemeData.estimateBrightnessForColor(c) == Brightness.dark
+        ? Colors.white
+        : Colors.black;
+
 class ChartFrame extends StatelessWidget {
   final String title;
   final Widget child;
@@ -103,10 +109,11 @@ class EquityCurveChart extends StatelessWidget {
             ),
           ),
           borderData: FlBorderData(show: false),
+          lineTouchData: const LineTouchData(enabled: false),
           lineBarsData: [
             LineChartBarData(
               spots: spots,
-              isCurved: true,
+              isCurved: false,
               color: color,
               barWidth: 2.5,
               dotData: const FlDotData(show: false),
@@ -164,13 +171,23 @@ class MonthlyPnlChart extends StatelessWidget {
                 FlLine(color: pal.line, strokeWidth: 1),
           ),
           borderData: FlBorderData(show: false),
+          barTouchData: BarTouchData(enabled: false),
           titlesData: FlTitlesData(
             topTitles:
                 const AxisTitles(sideTitles: SideTitles(showTitles: false)),
             rightTitles:
                 const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-            leftTitles:
-                const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            leftTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles: true,
+                reservedSize: 40,
+                getTitlesWidget: (v, meta) {
+                  if (v == meta.max || v == meta.min) return const SizedBox();
+                  return Text(compactMoney(v),
+                      style: TextStyle(color: pal.textLo, fontSize: 8));
+                },
+              ),
+            ),
             bottomTitles: AxisTitles(
               sideTitles: SideTitles(
                 showTitles: true,
@@ -178,6 +195,9 @@ class MonthlyPnlChart extends StatelessWidget {
                 getTitlesWidget: (v, _) {
                   final i = v.toInt();
                   if (i < 0 || i >= stats.length) return const SizedBox();
+                  // Thin labels so they never collide (aim for ~6 visible).
+                  final step = (stats.length / 6).ceil();
+                  if (step > 1 && i % step != 0) return const SizedBox();
                   final parts = stats[i].label.split(' ');
                   return Padding(
                     padding: const EdgeInsets.only(top: 6),
@@ -322,8 +342,8 @@ class AllocationDonut extends StatelessWidget {
                       title:
                           '${((m.equityPhp / total) * 100).toStringAsFixed(0)}%',
                       radius: 28,
-                      titleStyle: const TextStyle(
-                          color: Colors.white,
+                      titleStyle: TextStyle(
+                          color: _sliceLabelColor(Color(m.account.color)),
                           fontWeight: FontWeight.w700,
                           fontSize: 11),
                     ),
@@ -333,9 +353,8 @@ class AllocationDonut extends StatelessWidget {
           ),
           Expanded(
             flex: 5,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
+            child: ListView(
+              padding: EdgeInsets.zero,
               children: [
                 for (final m in positive)
                   Padding(

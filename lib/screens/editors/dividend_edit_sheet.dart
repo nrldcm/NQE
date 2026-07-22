@@ -82,6 +82,11 @@ class _DividendEditorState extends State<_DividendEditor> {
   }
 
   Future<void> _save() async {
+    if (_stock.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Stock code is required')));
+      return;
+    }
     final d = widget.existing ??
         Dividend(
             id: uid(),

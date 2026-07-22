@@ -138,7 +138,9 @@ ThemeData buildNqeTheme(Brightness brightness) {
         borderSide: BorderSide(color: scheme.primary, width: 1.5),
       ),
       labelStyle: TextStyle(color: scheme.onSurfaceVariant),
-      isDense: true,
+      // Explicit, identical padding so TextField and DropdownButtonFormField
+      // render at the SAME height and line up when placed side-by-side.
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
     ),
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(

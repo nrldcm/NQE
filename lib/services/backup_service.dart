@@ -67,9 +67,11 @@ class BackupService {
   /// Let the user pick a file and return its bytes (size-capped). Null if the
   /// user cancelled. Lets the caller decide about passphrases before importing.
   Future<Uint8List?> pickFileBytes() async {
+    // withData:false so the whole file isn't slurped into memory before we can
+    // reject an oversized pick (OOM/DoS guard).
     final picked = await FilePicker.platform.pickFiles(
       type: FileType.any,
-      withData: true,
+      withData: false,
     );
     if (picked == null || picked.files.isEmpty) return null;
     final f = picked.files.single;
@@ -77,18 +79,23 @@ class BackupService {
     if (f.size > maxImportBytes) {
       throw CryptoException('That file is too large to be an NQE backup.');
     }
-    Uint8List? bytes = f.bytes;
-    if (bytes == null && f.path != null) {
-      final file = File(f.path!);
-      if (await file.length() > maxImportBytes) {
+    final path = f.path;
+    if (path == null) {
+      // Fallback (e.g. platforms without a path): use in-memory bytes if small.
+      final b = f.bytes;
+      if (b == null) {
+        throw CryptoException('Could not read the selected file.');
+      }
+      if (b.length > maxImportBytes) {
         throw CryptoException('That file is too large to be an NQE backup.');
       }
-      bytes = await file.readAsBytes();
+      return b;
     }
-    if (bytes == null) {
-      throw CryptoException('Could not read the selected file.');
+    final file = File(path);
+    if (await file.length() > maxImportBytes) {
+      throw CryptoException('That file is too large to be an NQE backup.');
     }
-    return bytes;
+    return file.readAsBytes();
   }
 
   /// True if the given file needs a passphrase (used to prompt on import).

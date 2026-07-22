@@ -69,7 +69,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     await _auth.setLockEnabled(true);
     await _auth.setBiometricEnabled(_enableBio && _canBio);
     if (!mounted) return;
-    setState(() => _busy = false);
+    if (mounted) setState(() => _busy = false);
     _goto(2);
   }
 
@@ -94,7 +94,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       await appState.load();
       await _finish();
     } catch (e) {
-      setState(() => _busy = false);
+      if (mounted) setState(() => _busy = false);
       _snack('Could not start: $e');
     }
   }
@@ -104,14 +104,14 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     try {
       final bytes = await BackupService.instance.pickFileBytes();
       if (bytes == null) {
-        setState(() => _busy = false);
+        if (mounted) setState(() => _busy = false);
         return;
       }
       var pass = '';
       if (BackupService.instance.needsPassphrase(bytes)) {
         pass = await _promptPass() ?? '';
         if (pass.isEmpty) {
-          setState(() => _busy = false);
+          if (mounted) setState(() => _busy = false);
           _snack('Passphrase required for this backup');
           return;
         }
@@ -121,10 +121,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       _snack('Restored ${res.accounts} books, ${res.trades} trades');
       await _finish();
     } on CryptoException catch (e) {
-      setState(() => _busy = false);
+      if (mounted) setState(() => _busy = false);
       _snack(e.message);
     } catch (e) {
-      setState(() => _busy = false);
+      if (mounted) setState(() => _busy = false);
       _snack('Restore failed: $e');
     }
   }
@@ -238,16 +238,18 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             obscureText: true,
             maxLength: 6,
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-            decoration: const InputDecoration(labelText: 'PIN (4–6 digits)'),
+            decoration: const InputDecoration(
+                labelText: 'PIN (4–6 digits)', counterText: ''),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 12),
           TextField(
             controller: _pin2,
             keyboardType: TextInputType.number,
             obscureText: true,
             maxLength: 6,
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-            decoration: const InputDecoration(labelText: 'Confirm PIN'),
+            decoration:
+                const InputDecoration(labelText: 'Confirm PIN', counterText: ''),
           ),
           if (_canBio)
             SwitchListTile(
@@ -301,7 +303,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             pal,
             icon: Icons.add_circle_outline,
             title: 'Start fresh',
-            subtitle: 'Begin with example books you can edit',
+            subtitle: 'Begin with an empty ledger — add your own books',
             onTap: _busy ? null : _startFresh,
           ),
           const SizedBox(height: 12),

@@ -24,20 +24,10 @@ class AboutScreen extends StatelessWidget {
           _card(pal, [
             _row(pal, 'For', 'John Rey Tampus'),
             _divider(pal),
-            _row(pal, 'Fund', 'Willong Capital'),
-            _divider(pal),
             _row(pal, 'Developed by', 'Norell Mantilla'),
             _divider(pal),
             _row(pal, 'Version', '1.0.0'),
           ]),
-          const SizedBox(height: 24),
-          Text(
-            'NQE is a private, offline-first trading ledger. Your data is stored '
-            'securely on this device in an encrypted-capable SQLite database and '
-            'never leaves your phone unless you export an encrypted backup.',
-            style: TextStyle(color: pal.textLo, fontSize: 13, height: 1.5),
-            textAlign: TextAlign.center,
-          ),
           const SizedBox(height: 28),
           Center(
             child: Text(
