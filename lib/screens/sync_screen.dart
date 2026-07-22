@@ -2,6 +2,7 @@
 // by scanning the QR. The phone is the source of truth; the desktop connects as
 // a client. All state comes from SyncServer.instance (Module B).
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import '../sync/sync_server.dart';
@@ -127,8 +128,51 @@ class _SyncScreenState extends State<SyncScreen> {
             textAlign: TextAlign.center,
             style: TextStyle(color: pal.textLo, fontSize: 13),
           ),
+          const SizedBox(height: 14),
+          _pairingLink(pal),
         ],
       ),
+    );
+  }
+
+  /// Copyable pairing URI for desktops where scanning the QR isn't handy.
+  Widget _pairingLink(NqePalette pal) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+      decoration: BoxDecoration(
+        color: pal.bg,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: pal.line),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(
+            child: SelectableText(
+              _server.pairingUri,
+              style: TextStyle(
+                color: pal.textHi,
+                fontSize: 12,
+                fontFamily: 'monospace',
+                height: 1.4,
+              ),
+            ),
+          ),
+          IconButton(
+            icon: Icon(Icons.copy_rounded, size: 20, color: pal.textHi),
+            tooltip: 'Copy link',
+            onPressed: _copyPairingUri,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _copyPairingUri() async {
+    await Clipboard.setData(ClipboardData(text: _server.pairingUri));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Pairing link copied')),
     );
   }
 

@@ -29,6 +29,7 @@ import 'package:shelf_web_socket/shelf_web_socket.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../services/crypto_service.dart';
+import '../state/app_state.dart';
 import 'foreground.dart';
 import 'sync_engine.dart';
 import 'sync_repo.dart';
@@ -55,6 +56,18 @@ class SyncServer extends ChangeNotifier {
 
   String _pairingKey = '';
   HttpServer? _server;
+
+  /// Currently authenticated peer sockets. Used both to count connected peers
+  /// and to fan out the periodic auto-sync push below.
+  final Set<WebSocketChannel> _peers = {};
+
+  /// Periodic full-state push. Runs only while at least one peer is connected;
+  /// started on the first connect and cancelled on the last disconnect / stop().
+  Timer? _pushTimer;
+
+  /// How often the server proactively pushes a fresh encrypted snapshot to each
+  /// connected peer so phone-side edits reach connected desktops automatically.
+  static const Duration _pushInterval = Duration(seconds: 4);
 
   /// Pairing URI encoded into the QR shown to the desktop client.
   String get pairingUri =>
@@ -105,6 +118,8 @@ class SyncServer extends ChangeNotifier {
       // Ignore — we're tearing down anyway.
     }
     _server = null;
+    _stopPushTimer();
+    _peers.clear();
     connectedPeers = 0;
     peer = PeerState.idle;
     status = SyncStatus.stopped;
@@ -139,9 +154,12 @@ class SyncServer extends ChangeNotifier {
 
     void teardown() {
       if (authed) {
-        connectedPeers = connectedPeers > 0 ? connectedPeers - 1 : 0;
+        _peers.remove(channel);
+        connectedPeers = _peers.length;
         authed = false;
       }
+      // Stop the auto-sync push once the last peer has gone.
+      if (_peers.isEmpty) _stopPushTimer();
       peer = connectedPeers > 0 ? PeerState.connected : PeerState.disconnected;
       notifyListeners();
       sub?.cancel();
@@ -162,9 +180,12 @@ class SyncServer extends ChangeNotifier {
                 return;
               }
               authed = true;
-              connectedPeers += 1;
+              _peers.add(channel);
+              connectedPeers = _peers.length;
               peer = PeerState.connected;
               notifyListeners();
+              // Kick off continuous auto-sync now that a peer is connected.
+              _startPushTimer();
               await _sendLocalPayload(channel);
               return;
             }
@@ -203,11 +224,58 @@ class SyncServer extends ChangeNotifier {
     }
   }
 
+  /// Start the periodic full-state push if it isn't already running. Idempotent
+  /// so repeated peer connects don't spawn multiple timers.
+  void _startPushTimer() {
+    _pushTimer ??= Timer.periodic(_pushInterval, (_) {
+      // Fire-and-forget; the async body swallows its own errors so the timer
+      // never propagates an exception.
+      unawaited(_pushToPeers());
+    });
+  }
+
+  /// Cancel and clear the periodic push timer.
+  void _stopPushTimer() {
+    _pushTimer?.cancel();
+    _pushTimer = null;
+  }
+
+  /// Build a fresh encrypted snapshot once and fan it out to every connected
+  /// peer. Idempotent on the receiving side (SyncEngine merges by newest
+  /// (table,id)), so a re-send never duplicates or loses data. Fully guarded:
+  /// a build/encrypt failure is recorded but never thrown, and a dead socket is
+  /// skipped without aborting the rest.
+  Future<void> _pushToPeers() async {
+    if (_peers.isEmpty) return;
+    try {
+      final records = await SyncRepo.instance.buildAll();
+      final json = SyncEngine.encodePayload(records);
+      final encrypted = await CryptoService.instance.encryptSecret(json);
+      for (final channel in _peers.toList()) {
+        try {
+          channel.sink.add(encrypted);
+        } catch (_) {
+          // Broken pipe — leave teardown (onDone/onError) to remove it.
+        }
+      }
+    } catch (e) {
+      lastError = 'Auto-sync push failed: $e';
+      notifyListeners();
+    }
+  }
+
   /// Decrypt an incoming frame and merge it into the local database.
   Future<void> _applyRemoteFrame(String frame) async {
     final json = await CryptoService.instance.decryptSecret(frame);
     final records = SyncEngine.decodePayload(json);
     await SyncRepo.instance.applyRemote(records);
+    // Refresh the phone's own screens so a desktop-originated edit shows up
+    // live here too (two-way convergence). Best-effort — never throws.
+    try {
+      await appState.load();
+    } catch (_) {
+      // Non-fatal: the merge already landed in the DB.
+    }
   }
 
   Future<void> _closeQuietly(

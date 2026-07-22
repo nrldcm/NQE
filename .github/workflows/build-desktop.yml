@@ -57,21 +57,28 @@ jobs:
           --build-name=${{ steps.ver.outputs.version }}
           --build-number=${{ github.run_number }}
 
-      - name: Package zip
+      - name: Package single-file .exe + zip
         shell: pwsh
         run: |
           $rel = "build/windows/x64/runner/Release"
           if (!(Test-Path $rel)) { $rel = "build/windows/runner/Release" }
-          $zip = "NQE-desktop-v${{ steps.ver.outputs.version }}.zip"
-          Compress-Archive -Path "$rel/*" -DestinationPath $zip -Force
-          Copy-Item $zip "NQE-desktop-latest.zip" -Force
-          Get-ChildItem *.zip
+          $ver = "${{ steps.ver.outputs.version }}"
+          # Portable zip (fallback / power users).
+          Compress-Archive -Path "$rel/*" -DestinationPath "NQE-desktop-v$ver.zip" -Force
+          Copy-Item "NQE-desktop-v$ver.zip" "NQE-desktop-latest.zip" -Force
+          # Single self-contained .exe via warp-packer (runs the whole app from one file).
+          Invoke-WebRequest -Uri "https://github.com/dgiagio/warp/releases/download/v0.3.0/windows-x64.warp-packer.exe" -OutFile warp-packer.exe
+          ./warp-packer.exe --arch windows-x64 --input_dir "$rel" --exec nqe.exe --output "NQE-v$ver.exe"
+          Copy-Item "NQE-v$ver.exe" "NQE-desktop-latest.exe" -Force
+          Get-ChildItem *.exe, *.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: NQE-desktop
-          path: "*.zip"
+          path: |
+            *.exe
+            *.zip
 
       - name: Publish rolling + versioned (main)
         if: github.ref == 'refs/heads/main'

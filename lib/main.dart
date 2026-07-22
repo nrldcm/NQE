@@ -1,13 +1,63 @@
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:window_manager/window_manager.dart';
+import 'package:windows_single_instance/windows_single_instance.dart';
 
 import 'services/auth_service.dart';
+import 'screens/desktop/desktop_shell.dart';
 import 'screens/lock_screen.dart';
 import 'screens/splash_screen.dart';
 import 'theme.dart';
 
-Future<void> main() async {
+Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  final isDesktop = !kIsWeb &&
+      (Platform.isWindows || Platform.isLinux || Platform.isMacOS);
+
+  if (isDesktop) {
+    // Enforce a single running instance on Windows — a second launch just
+    // focuses the existing window instead of opening another.
+    if (Platform.isWindows) {
+      try {
+        await WindowsSingleInstance.ensureSingleInstance(
+          args,
+          'nqe_desktop_single_instance',
+          onSecondWindow: (_) {
+            windowManager.show();
+            windowManager.focus();
+          },
+        );
+      } catch (_) {/* non-fatal */}
+    }
+
+    // Desktop runs the same app in "client mode": the local DB is backed by
+    // the sqflite FFI (sqlite3) implementation instead of the mobile plugin.
+    sqfliteFfiInit();
+    databaseFactory = databaseFactoryFfi;
+
+    await windowManager.ensureInitialized();
+    const opts = WindowOptions(
+      minimumSize: Size(900, 620),
+      size: Size(1200, 780),
+      title: 'NQE Desktop',
+      center: true,
+    );
+    await windowManager.waitUntilReadyToShow(opts, () async {
+      await windowManager.show();
+      await windowManager.focus();
+    });
+
+    await themeController.load();
+    runApp(const DesktopApp());
+    return;
+  }
+
+  // Mobile bootstrap (unchanged).
   await themeController.load();
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
