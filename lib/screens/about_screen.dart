@@ -26,7 +26,7 @@ class AboutScreen extends StatelessWidget {
             _divider(pal),
             _row(pal, 'Developed by', 'Norell Mantilla'),
             _divider(pal),
-            _row(pal, 'Version', '1.0.0'),
+            _row(pal, 'Version', '1.1.0'),
           ]),
           const SizedBox(height: 28),
           Center(
