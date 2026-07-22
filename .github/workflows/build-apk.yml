@@ -69,15 +69,27 @@ jobs:
       - name: Generate launcher icons
         run: dart run flutter_launcher_icons
 
-      - name: Build APK (release)
-        run: flutter build apk --release
-
-      - name: Read app version
+      # Intelligent versioning: major stays 1, minor auto-increments from the
+      # highest existing v1.N.0 release; build number is monotonic (run number).
+      - name: Compute version
         id: ver
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          V=$(grep '^version:' pubspec.yaml | sed 's/version:[[:space:]]*//; s/+.*//')
-          echo "version=$V" >> "$GITHUB_OUTPUT"
-          echo "App version: $V"
+          latest=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 200 \
+            --json tagName -q '.[].tagName' 2>/dev/null \
+            | grep -E '^v1\.[0-9]+\.0$' | sed -E 's/^v1\.([0-9]+)\.0$/\1/' \
+            | sort -n | tail -1)
+          next=$(( ${latest:-0} + 1 ))
+          echo "version=1.$next.0" >> "$GITHUB_OUTPUT"
+          echo "code=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "Next version: 1.$next.0 (build ${GITHUB_RUN_NUMBER})"
+
+      - name: Build APK (release)
+        run: |
+          flutter build apk --release \
+            --build-name=${{ steps.ver.outputs.version }} \
+            --build-number=${{ steps.ver.outputs.code }}
 
       - name: Rename APK
         run: |
