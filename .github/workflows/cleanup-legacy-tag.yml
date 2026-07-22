@@ -21,22 +21,25 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       R: ${{ github.repository }}
     steps:
-      - name: Delete v2-preview release (if present)
+      - name: Remove legacy v2-preview release + tag
         run: |
-          id=$(gh api "repos/$R/releases/tags/v2-preview" --jq '.id' 2>/dev/null || true)
-          if [ -n "${id:-}" ]; then
+          set +e
+          # Delete the release only if one actually exists (id is numeric).
+          id=$(gh api "repos/$R/releases/tags/v2-preview" --jq '.id' 2>/dev/null)
+          if printf '%s' "$id" | grep -qE '^[0-9]+$'; then
             gh api -X DELETE "repos/$R/releases/$id" && echo "Deleted release $id"
           else
             echo "No v2-preview release."
           fi
 
-      - name: Delete v2-preview tag (if present)
-        run: |
+          # Delete the git tag if it exists.
           if gh api "repos/$R/git/refs/tags/v2-preview" >/dev/null 2>&1; then
-            gh api -X DELETE "repos/$R/git/refs/tags/v2-preview" && echo "Deleted tag v2-preview"
+            gh api -X DELETE "repos/$R/git/refs/tags/v2-preview" \
+              && echo "Deleted tag v2-preview" \
+              || { echo "Tag delete failed"; exit 1; }
           else
             echo "No v2-preview tag."
           fi
 
-      - name: Show remaining tags
-        run: gh api "repos/$R/tags" --jq '.[].name' || true
+          echo "Remaining tags:"
+          gh api "repos/$R/tags" --jq '.[].name' || true
