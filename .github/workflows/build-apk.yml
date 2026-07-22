@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".github/workflows/**"
   workflow_dispatch:
 
 # Least privilege by default; only the build job needs to publish releases.
