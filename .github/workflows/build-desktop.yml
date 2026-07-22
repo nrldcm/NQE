@@ -12,7 +12,12 @@ permissions:
 jobs:
   windows:
     name: Build Windows .exe
-    runs-on: windows-latest
+    # Pin to windows-2022: the newer "windows-latest" image ships a Visual
+    # Studio that Flutter 3.24.5's toolchain detection can't see, so it falls
+    # back to the "Visual Studio 16 2019" CMake generator and fails with
+    # "could not find any instance of Visual Studio". windows-2022 has the
+    # VS 2022 that this Flutter version detects reliably.
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
 
@@ -23,6 +28,12 @@ jobs:
           cache: true
 
       - run: flutter --version
+
+      # Surface the detected Visual Studio toolchain (helps diagnose any future
+      # runner-image regression before the build step).
+      - name: Flutter doctor
+        run: flutter doctor -v
+        continue-on-error: true
 
       - name: Enable + generate Windows platform
         run: |
