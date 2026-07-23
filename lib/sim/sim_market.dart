@@ -1,6 +1,7 @@
-// Sandbox instrument catalogue across markets: PSE + US stocks, Forex majors,
-// and Crypto. Static + offline; the simulated price feed seeds from [seedPrice]
-// and the live feed (when configured) overrides with real quotes.
+// Sandbox instrument catalogue across markets: PSE + US stocks, Forex, global
+// Indices, Commodities and Crypto — a broad, TradingView-style universe. Static
+// + offline; the simulated price feed seeds from [seedPrice] and the live feed
+// (when configured) overrides with real quotes.
 import 'sim_models.dart';
 
 class SimSymbol {
