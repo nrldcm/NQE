@@ -7,6 +7,7 @@
 import 'package:flutter/material.dart';
 
 import '../../services/auth_service.dart';
+import '../../sim/ui/sandbox_screen.dart';
 import '../../state/app_state.dart';
 import '../../sync/sync_client.dart';
 import '../../theme.dart';
@@ -163,7 +164,14 @@ class DesktopShell extends StatefulWidget {
 class _DesktopShellState extends State<DesktopShell> {
   int _index = 0;
 
-  static const _titles = ['Dashboard', 'Books', 'Live', 'Statistics', 'Settings'];
+  static const _titles = [
+    'Dashboard',
+    'Books',
+    'Live',
+    'Sandbox',
+    'Statistics',
+    'Settings'
+  ];
 
   Widget _panel(int i) {
     switch (i) {
@@ -174,6 +182,8 @@ class _DesktopShellState extends State<DesktopShell> {
       case 2:
         return const DesktopLiveScreen();
       case 3:
+        return const SandboxScreen();
+      case 4:
         return const StatsScreen();
       default:
         return const SettingsScreen();
@@ -278,6 +288,11 @@ class _NavRail extends StatelessWidget {
           icon: Icon(Icons.candlestick_chart_outlined),
           selectedIcon: Icon(Icons.candlestick_chart),
           label: Text('Live'),
+        ),
+        NavigationRailDestination(
+          icon: Icon(Icons.science_outlined),
+          selectedIcon: Icon(Icons.science),
+          label: Text('Sandbox'),
         ),
         NavigationRailDestination(
           icon: Icon(Icons.insights_outlined),

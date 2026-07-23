@@ -1,6 +1,7 @@
 // Bottom-navigation shell hosting the four main sections.
 import 'package:flutter/material.dart';
 
+import '../sim/ui/sandbox_screen.dart';
 import '../theme.dart';
 import 'books_screen.dart';
 import 'dashboard_screen.dart';
@@ -22,6 +23,7 @@ class _HomeShellState extends State<HomeShell> {
     DashboardScreen(),
     BooksScreen(),
     LiveScreen(),
+    SandboxScreen(),
     StatsScreen(),
     SettingsScreen(),
   ];
@@ -59,6 +61,7 @@ class _HomeShellState extends State<HomeShell> {
                 Icons.account_balance_wallet, 'Books', pal),
             _dest(Icons.candlestick_chart_outlined, Icons.candlestick_chart,
                 'Live', pal),
+            _dest(Icons.science_outlined, Icons.science, 'Sandbox', pal),
             _dest(Icons.insights_outlined, Icons.insights, 'Stats', pal),
             _dest(Icons.settings_outlined, Icons.settings, 'Settings', pal),
           ],
