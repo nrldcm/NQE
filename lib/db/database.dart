@@ -28,6 +28,12 @@ class LedgerDb {
   LedgerDb._();
   static final LedgerDb instance = LedgerDb._();
 
+  /// Desktop-mirror flag: when true the ledger lives in memory ONLY, so the
+  /// desktop persists nothing to disk and always gets/sends its data through
+  /// the phone (the single source of truth). Set once at desktop startup,
+  /// before the first DB access.
+  static bool ephemeral = false;
+
   Database? _db;
 
   /// Change marker written on every upsert / delete. ISO-8601 UTC so it sorts
@@ -41,8 +47,12 @@ class LedgerDb {
   }
 
   Future<Database> _open() async {
-    final dir = await getApplicationDocumentsDirectory();
-    final path = p.join(dir.path, 'nqe_ledger.db');
+    // Desktop mirror: a fresh in-memory ledger every launch, populated purely
+    // by what the phone syncs over — nothing is written to disk.
+    final path = ephemeral
+        ? inMemoryDatabasePath
+        : p.join((await getApplicationDocumentsDirectory()).path,
+            'nqe_ledger.db');
     return openDatabase(
       path,
       version: _kDbSchemaVersion,

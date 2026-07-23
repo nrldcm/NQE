@@ -7,6 +7,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:windows_single_instance/windows_single_instance.dart';
 
+import 'db/database.dart';
 import 'services/auth_service.dart';
 import 'sim/sim_db.dart';
 import 'sim/sim_state.dart';
@@ -44,9 +45,11 @@ Future<void> main(List<String> args) async {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
 
-    // The desktop is a pure mirror of the phone: keep the Sandbox database in
-    // memory only, so it persists nothing and depends entirely on the phone
-    // (the single source of truth) for its data — no divergent local state.
+    // The desktop is a pure mirror of the phone: keep BOTH the ledger and the
+    // Sandbox databases in memory only, so it persists nothing and always
+    // gets/sends its data through the phone (the single source of truth) —
+    // no divergent local state on the desktop.
+    LedgerDb.ephemeral = true;
     SimDb.ephemeral = true;
 
     await windowManager.ensureInitialized();
