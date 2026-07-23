@@ -16,6 +16,8 @@ int priceDecimals(SimMarket market, double price) {
       if (price >= 1) return 4;
       return 6;
     case SimMarket.stocks:
+    case SimMarket.indices:
+    case SimMarket.commodities:
       return 2;
   }
 }
@@ -56,12 +58,16 @@ Color marketColor(SimMarket m) => switch (m) {
       SimMarket.stocks => const Color(0xFF4C8DFF),
       SimMarket.forex => const Color(0xFFB07CF6),
       SimMarket.crypto => const Color(0xFFF39A3B),
+      SimMarket.indices => const Color(0xFF2AB6A6),
+      SimMarket.commodities => const Color(0xFFD9A441),
     };
 
 IconData marketIcon(SimMarket m) => switch (m) {
       SimMarket.stocks => Icons.business_center_outlined,
       SimMarket.forex => Icons.currency_exchange,
       SimMarket.crypto => Icons.currency_bitcoin,
+      SimMarket.indices => Icons.ssid_chart,
+      SimMarket.commodities => Icons.oil_barrel_outlined,
     };
 
 /// A framed panel matching the app's card styling.

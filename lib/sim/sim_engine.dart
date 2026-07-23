@@ -52,6 +52,8 @@ class SimEngine {
         SimMarket.stocks => 0.0025,
         SimMarket.forex => 0.0002,
         SimMarket.crypto => 0.001,
+        SimMarket.indices => 0.0002,
+        SimMarket.commodities => 0.0005,
       };
 
   /// Identity FX — used when no converter is supplied (single-currency).

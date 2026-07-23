@@ -6,7 +6,8 @@
 // money only — nothing here ever touches real funds.
 import 'dart:convert';
 
-enum SimMarket { stocks, forex, crypto }
+// NB: only ever APPEND — the index is persisted in the sandbox DB.
+enum SimMarket { stocks, forex, crypto, indices, commodities }
 
 enum TradeMode { spot, margin }
 
@@ -26,6 +27,8 @@ String marketLabel(SimMarket m) => switch (m) {
       SimMarket.stocks => 'Stocks',
       SimMarket.forex => 'Forex',
       SimMarket.crypto => 'Crypto',
+      SimMarket.indices => 'Indices',
+      SimMarket.commodities => 'Commodities',
     };
 
 // ---- Account -----------------------------------------------------------------

@@ -337,10 +337,9 @@ class _CandlePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _CandlePainter old) =>
-      old.candles != candles ||
-      old.cross != cross ||
-      old.candles.length != candles.length ||
-      (candles.isNotEmpty &&
-          old.candles.isNotEmpty &&
-          old.candles.last.c != candles.last.c);
+      // The candle series is mutated in place (same List instance, forming
+      // candle updated on each tick), so a value-diff can't detect changes.
+      // Repaint every build — it's driven by the 1 s price tick / crosshair,
+      // and painting ~120 candles is cheap.
+      true;
 }

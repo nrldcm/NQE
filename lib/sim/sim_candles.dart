@@ -147,6 +147,8 @@ class CandleStore {
       SimMarket.crypto => 0.018,
       SimMarket.forex => 0.0035,
       SimMarket.stocks => 0.011,
+      SimMarket.indices => 0.008,
+      SimMarket.commodities => 0.013,
     };
     final scale = switch (tf) {
       Timeframe.m1 => 0.3,
