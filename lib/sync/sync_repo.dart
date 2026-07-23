@@ -60,7 +60,14 @@ class SyncRepo {
   ///   * not deleted -> replace the row from `data` + drop any tombstone (restore).
   /// Returns the number of records actually applied. The whole batch runs in one
   /// transaction, so a failure rolls back to the pre-sync state.
-  Future<int> applyRemote(List<SyncRecord> remote) async {
+  /// [asFollower] true means this device is a passive mirror of the peer (the
+  /// desktop is always a mirror; the phone is one WHILE a desktop is connected,
+  /// because Desktop Mode gates the phone so the desktop is the sole editor).
+  /// A follower applies the peer's ledger rows VERBATIM — clock-independent —
+  /// so a genuine edit/delete can't be silently dropped or resurrected by
+  /// wall-clock skew between the two devices (the same fix the sandbox got).
+  Future<int> applyRemote(List<SyncRecord> remote,
+      {bool asFollower = false}) async {
     if (remote.isEmpty) return 0;
     final d = await LedgerDb.instance.db;
 
@@ -76,8 +83,10 @@ class SyncRepo {
         // sending an unknown/renamed table — never write to arbitrary tables).
         if (!kSyncTables.contains(r.table)) continue;
 
-        final local = await _localState(txn, r.table, r.id);
-        if (local != null && !SyncEngine.isNewer(r, local)) continue;
+        if (!asFollower) {
+          final local = await _localState(txn, r.table, r.id);
+          if (local != null && !SyncEngine.isNewer(r, local)) continue;
+        }
 
         if (r.deleted) {
           await txn.delete(r.table, where: 'id = ?', whereArgs: [r.id]);

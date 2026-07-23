@@ -109,14 +109,22 @@ class SimSyncRepo {
             // Shared row → last-writer-wins.
             if (localStamp != null && remoteStamp <= localStamp) continue;
           } else if (r.deleted) {
-            // The only mirror-originated delete we honor is a cancel of an
-            // order that is still open here; never delete filled history /
-            // positions / trades the engine owns.
-            if (r.table != 'sim_orders') continue;
-            final rows = await txn.query('sim_orders',
-                columns: ['status'], where: 'id=?', whereArgs: [r.id], limit: 1);
-            final open = rows.isNotEmpty && (rows.first['status'] == 0);
-            if (!open) continue;
+            // Mirror-originated deletes the authority honors: a cancel of a
+            // still-open order, and a watchlist removal (both user-owned).
+            // Never delete filled history / positions / trades / the account.
+            if (r.table == 'sim_watch') {
+              // ok — user-owned watchlist item, honor the removal
+            } else if (r.table == 'sim_orders') {
+              final rows = await txn.query('sim_orders',
+                  columns: ['status'],
+                  where: 'id=?',
+                  whereArgs: [r.id],
+                  limit: 1);
+              final open = rows.isNotEmpty && (rows.first['status'] == 0);
+              if (!open) continue;
+            } else {
+              continue;
+            }
           } else {
             // A live non-account row is accepted only if brand new here (a
             // forwarded order). Otherwise the phone already owns it — ignore.

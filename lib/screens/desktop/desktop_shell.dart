@@ -170,7 +170,9 @@ class _DesktopBootstrapState extends State<_DesktopBootstrap> {
       listenable: SyncClient.instance,
       builder: (context, _) {
         final state = SyncClient.instance.state;
-        if (state != SyncConn.connected) {
+        // Reveal the workspace only when connected AND the first phone snapshot
+        // has landed — otherwise the freshly-wiped mirror would flash empty.
+        if (state != SyncConn.connected || !SyncClient.instance.hydrated) {
           return _ReconnectGate(
             state: state,
             message: SyncClient.instance.statusMessage,
@@ -208,9 +210,11 @@ class _ReconnectGate extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final pal = context.nqe;
-    // Still trying (connecting/reconnecting/idle) vs given-up (disconnected).
-    final live =
-        state == SyncConn.connecting || state == SyncConn.reconnecting;
+    // Still trying / loading (connecting, reconnecting, or connected-but-not-
+    // yet-hydrated) vs given-up (disconnected/idle).
+    final live = state == SyncConn.connecting ||
+        state == SyncConn.reconnecting ||
+        state == SyncConn.connected;
     return Scaffold(
       backgroundColor: pal.bg,
       body: Center(

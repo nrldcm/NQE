@@ -181,6 +181,29 @@ void main() {
     expect(intent['amount'], 50000.0);
   });
 
+  test('a desktop watchlist removal is honored by the authority', () async {
+    final phone = await freshDevice();
+    final desktop = await freshDevice();
+
+    // Phone has a watch row; desktop removes it (tombstone).
+    await (await phone.db).insert('sim_watch', {
+      'id': 'w1',
+      'account_id': 'acc1',
+      'symbol': 'BTCUSDT',
+      'market': 2,
+      'added_at': 100,
+    });
+    await (await desktop.db).insert('sim_tombstones',
+        {'entity': 'sim_watch', 'id': 'w1', 'updated_at': 5000});
+
+    final fromDesktop = await SimSyncRepo.instance.buildAll(db: desktop);
+    await SimSyncRepo.instance
+        .applyRemote(fromDesktop, asFollower: false, db: phone);
+
+    // User-owned watchlist removal reaches the phone (not resurrected).
+    expect(await row(phone, 'sim_watch', 'w1'), isNull);
+  });
+
   test('follower applies an authority tombstone (closed position propagates)',
       () async {
     final phone = await freshDevice();

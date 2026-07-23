@@ -71,6 +71,11 @@ class SyncClient extends ChangeNotifier {
   bool _manuallyClosed = false;
   bool _authed = false;
 
+  /// True once the FIRST snapshot from the phone has been applied this
+  /// connection — the desktop shell waits for this before revealing the
+  /// workspace, so a freshly-wiped mirror never flashes empty data.
+  bool hydrated = false;
+
   // --- public API ----------------------------------------------------------
 
   /// Parse a `nqe://sync?host=&hosts=&port=&key=` URI, persist it, then connect.
@@ -262,7 +267,9 @@ class SyncClient extends ChangeNotifier {
       final frame = message is String ? message : message.toString();
       final json = await CryptoService.instance.decryptSecret(frame);
       final records = SyncEngine.decodePayload(json);
-      await SyncRepo.instance.applyRemote(records);
+      // The desktop is a pure mirror — apply the phone's ledger rows verbatim
+      // so a clock-skew LWW can never drop or resurrect a row here.
+      await SyncRepo.instance.applyRemote(records, asFollower: true);
       // Sandbox rows ride the same channel but land in the sim DB only.
       // The desktop mirrors the phone authority — apply its sim rows verbatim.
       final simApplied = await SimSyncRepo.instance
@@ -270,6 +277,11 @@ class SyncClient extends ChangeNotifier {
       if (simApplied > 0) await simState.onRemoteSimApplied();
       // Refresh the reused screens with the merged data.
       await appState.load();
+      // First real payload applied — the shell may now reveal the workspace.
+      if (!hydrated) {
+        hydrated = true;
+        notifyListeners();
+      }
       // Reply with our latest snapshot so the peer converges too.
       await _pushSnapshot();
     } catch (e, s) {
@@ -365,6 +377,7 @@ class SyncClient extends ChangeNotifier {
     _unbindAppState();
     _lastSentHash = null; // force a full resend on the next connect
     _authed = false;
+    hydrated = false; // require a fresh snapshot before showing the workspace
     try {
       _sub?.cancel();
     } catch (_) {

@@ -593,7 +593,11 @@ class SyncServer extends ChangeNotifier {
   Future<void> _applyRemoteFrame(String frame) async {
     final json = await CryptoService.instance.decryptSecret(frame);
     final records = SyncEngine.decodePayload(json);
-    await SyncRepo.instance.applyRemote(records);
+    // A connected desktop means Desktop Mode is gating this phone (the desktop
+    // is the sole editor), so accept its ledger edits VERBATIM — clock-skew
+    // can't then reject a genuine desktop edit/delete of an existing row.
+    await SyncRepo.instance
+        .applyRemote(records, asFollower: connectedPeers > 0);
     // Sandbox rows land in the sim DB only; then the phone (authority) reloads
     // so a desktop-placed order enters the engine loop and executes here. The
     // phone is the authority (asFollower:false) — it only accepts new forwarded
