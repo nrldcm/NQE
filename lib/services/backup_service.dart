@@ -16,6 +16,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../db/database.dart';
 import '../models.dart';
+import 'auth_service.dart';
 import 'crypto_service.dart';
 
 class ImportResult {
@@ -49,6 +50,9 @@ class BackupService {
     final bytes = await CryptoService.instance
         .encryptJson(snap.toJson(), passphrase: passphrase);
     final file = await _writeTemp(bytes);
+    // The share sheet backgrounds the app; suppress the resume-time relock so
+    // returning doesn't pop a PIN/fingerprint prompt over the flow.
+    AuthService.suppressAutoLock = true;
     try {
       await Share.shareXFiles(
         [XFile(file.path, mimeType: 'application/octet-stream')],
@@ -57,6 +61,7 @@ class BackupService {
             'NQE encrypted ledger backup (${DateFormat.yMMMd().format(DateTime.now())}).',
       );
     } finally {
+      _clearAutoLockSuppressSoon();
       // Don't leave encrypted copies lingering in the cache dir.
       try {
         if (await file.exists()) await file.delete();
@@ -64,15 +69,32 @@ class BackupService {
     }
   }
 
+  /// Backstop: clear the auto-lock suppress a moment after a backgrounding
+  /// backup op returns, in case no resume event fired to consume the one-shot
+  /// (so the guard can never get stuck on and disable locking).
+  void _clearAutoLockSuppressSoon() {
+    Future.delayed(const Duration(seconds: 2),
+        () => AuthService.suppressAutoLock = false);
+  }
+
   /// Let the user pick a file and return its bytes (size-capped). Null if the
   /// user cancelled. Lets the caller decide about passphrases before importing.
   Future<Uint8List?> pickFileBytes() async {
-    // withData:false so the whole file isn't slurped into memory before we can
-    // reject an oversized pick (OOM/DoS guard).
-    final picked = await FilePicker.platform.pickFiles(
-      type: FileType.any,
-      withData: false,
-    );
+    // The system file picker backgrounds the app; suppress the resume-time
+    // relock so returning with a file doesn't interrupt the restore with a
+    // PIN / fingerprint prompt.
+    AuthService.suppressAutoLock = true;
+    FilePickerResult? picked;
+    try {
+      // withData:false so the whole file isn't slurped into memory before we can
+      // reject an oversized pick (OOM/DoS guard).
+      picked = await FilePicker.platform.pickFiles(
+        type: FileType.any,
+        withData: false,
+      );
+    } finally {
+      _clearAutoLockSuppressSoon();
+    }
     if (picked == null || picked.files.isEmpty) return null;
     final f = picked.files.single;
 

@@ -110,6 +110,13 @@ class _NqeAppState extends State<NqeApp> with WidgetsBindingObserver {
   // Re-lock the app when it returns to the foreground after being backgrounded.
   Future<void> _maybeRelock() async {
     if (_relocking || lockScreenActive) return; // don't stack lock screens
+    // A backup import/export legitimately backgrounds the app (file picker /
+    // share sheet). Consume the one-shot suppress so returning from it doesn't
+    // pop a lock screen and interrupt the restore.
+    if (AuthService.suppressAutoLock) {
+      AuthService.suppressAutoLock = false;
+      return;
+    }
     _relocking = true;
     try {
       if (!await AuthService.instance.lockEnabled()) return;

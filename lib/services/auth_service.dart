@@ -34,6 +34,13 @@ class AuthService {
 
   final _localAuth = LocalAuthentication();
 
+  /// One-shot guard against the resume-time auto-relock. Flows that
+  /// intentionally background the app (the backup file picker / share sheet)
+  /// set this true; the next app-resume relock check consumes it and skips
+  /// locking once, so returning from the picker doesn't interrupt an in-progress
+  /// restore with a PIN / fingerprint prompt.
+  static bool suppressAutoLock = false;
+
   Future<SharedPreferences> get _prefs => SharedPreferences.getInstance();
 
   Future<bool> lockEnabled() async =>
