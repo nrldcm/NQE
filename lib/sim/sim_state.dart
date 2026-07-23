@@ -247,6 +247,9 @@ class SimState extends ChangeNotifier {
   Future<void> _reloadFromDb() async {
     final accounts = await _db.accounts();
     if (accounts.isEmpty) return;
+    // Synced data has arrived — make sure the UI isn't still showing the
+    // initial loading spinner (a mirror may never have run its own _load()).
+    loading = false;
     final prevId = _pf?.account.id;
     final acc = accounts.firstWhere((a) => a.id == prevId,
         orElse: () => accounts.first);

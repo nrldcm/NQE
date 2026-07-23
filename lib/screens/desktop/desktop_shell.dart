@@ -84,6 +84,10 @@ class _DesktopBootstrapState extends State<_DesktopBootstrap> {
     simState.mirror = paired;
 
     if (paired) {
+      // Ready the mirror BEFORE connecting so the phone's first sandbox
+      // snapshot has somewhere to land and paints immediately (mirror never
+      // self-creates an account — it waits for the phone's to sync in).
+      simState.init();
       // Auto-connect to the paired phone; state surfaces via ConnectionWatcher.
       try {
         SyncClient.instance.connect();
@@ -114,6 +118,7 @@ class _DesktopBootstrapState extends State<_DesktopBootstrap> {
   void _onPaired() {
     // Now paired → this desktop mirrors the phone's Sandbox.
     simState.mirror = true;
+    simState.init(); // ready the mirror to receive the phone's sandbox data
     // Re-run boot so the lock (now mirrored from the phone) is applied.
     setState(() {
       _ready = false;

@@ -217,6 +217,14 @@ class SyncServer extends ChangeNotifier {
 
   /// Stop the server, drop peers, and clear the foreground notification.
   Future<void> stop() async {
+    // Explicitly close each peer socket first so a connected desktop is told
+    // to disconnect immediately (tapping Disconnect on the phone drops it),
+    // instead of waiting to notice the server went away.
+    for (final channel in _peers.toList()) {
+      try {
+        await channel.sink.close(1000, 'server stopped');
+      } catch (_) {/* already gone */}
+    }
     try {
       await _server?.close(force: true);
     } catch (_) {
