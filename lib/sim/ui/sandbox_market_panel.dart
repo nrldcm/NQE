@@ -137,6 +137,8 @@ class _SandboxMarketPanelState extends State<SandboxMarketPanel> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(s.symbol,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                           color: pal.textHi,
                           fontWeight: FontWeight.w700,
