@@ -286,15 +286,6 @@ class DesktopShell extends StatefulWidget {
 class _DesktopShellState extends State<DesktopShell> {
   int _index = 0;
 
-  static const _titles = [
-    'Dashboard',
-    'Books',
-    'Live',
-    'Trade',
-    'Statistics',
-    'Settings'
-  ];
-
   Widget _panel(int i) {
     switch (i) {
       case 0:
@@ -315,144 +306,78 @@ class _DesktopShellState extends State<DesktopShell> {
   @override
   Widget build(BuildContext context) {
     final pal = context.nqe;
+    // Binance-style: a slim top navigation bar, and the workspace below it
+    // spanning the FULL width — so the chart and data panels get every pixel.
     return Scaffold(
       backgroundColor: pal.bg,
       body: SafeArea(
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final extended = constraints.maxWidth >= 1100;
-            return Row(
-              children: [
-                _NavRail(
-                  index: _index,
-                  extended: extended,
-                  onChanged: (i) => setState(() => _index = i),
+        child: Column(
+          children: [
+            _TopNav(
+              index: _index,
+              onChanged: (i) => setState(() => _index = i),
+            ),
+            Divider(height: 1, thickness: 1, color: pal.line),
+            Expanded(
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 200),
+                switchInCurve: Curves.easeOut,
+                switchOutCurve: Curves.easeIn,
+                transitionBuilder: (child, anim) =>
+                    FadeTransition(opacity: anim, child: child),
+                child: KeyedSubtree(
+                  key: ValueKey<int>(_index),
+                  child: _panel(_index),
                 ),
-                VerticalDivider(width: 1, thickness: 1, color: pal.line),
-                Expanded(
-                  child: Column(
-                    children: [
-                      _TopBar(title: _titles[_index]),
-                      Divider(height: 1, thickness: 1, color: pal.line),
-                      Expanded(
-                        child: AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 220),
-                          switchInCurve: Curves.easeOut,
-                          switchOutCurve: Curves.easeIn,
-                          transitionBuilder: (child, anim) => FadeTransition(
-                            opacity: anim,
-                            child: child,
-                          ),
-                          child: KeyedSubtree(
-                            key: ValueKey<int>(_index),
-                            child: _panel(_index),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            );
-          },
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 }
 
-class _NavRail extends StatelessWidget {
+/// Slim horizontal navigation bar (Binance-style): logo, the section tabs, and
+/// the live connection glyph — all in one compact row so the body below spans
+/// the full width and height.
+class _TopNav extends StatelessWidget {
   final int index;
-  final bool extended;
   final ValueChanged<int> onChanged;
-  const _NavRail({
-    required this.index,
-    required this.extended,
-    required this.onChanged,
-  });
+  const _TopNav({required this.index, required this.onChanged});
 
-  @override
-  Widget build(BuildContext context) {
-    final pal = context.nqe;
-    return NavigationRail(
-      selectedIndex: index,
-      onDestinationSelected: onChanged,
-      extended: extended,
-      backgroundColor: pal.surface,
-      labelType:
-          extended ? NavigationRailLabelType.none : NavigationRailLabelType.all,
-      groupAlignment: -0.9,
-      selectedIconTheme: IconThemeData(color: pal.textHi),
-      unselectedIconTheme: IconThemeData(color: pal.textLo),
-      selectedLabelTextStyle:
-          TextStyle(color: pal.textHi, fontWeight: FontWeight.w700),
-      unselectedLabelTextStyle: TextStyle(color: pal.textLo),
-      indicatorColor: pal.textHi.withOpacity(0.10),
-      leading: Padding(
-        padding: EdgeInsets.symmetric(
-          horizontal: extended ? 16 : 8,
-          vertical: 18,
-        ),
-        child: NqeLogo(scale: extended ? 0.28 : 0.18, showTagline: false),
-      ),
-      destinations: const [
-        NavigationRailDestination(
-          icon: Icon(Icons.dashboard_outlined),
-          selectedIcon: Icon(Icons.dashboard),
-          label: Text('Home'),
-        ),
-        NavigationRailDestination(
-          icon: Icon(Icons.account_balance_wallet_outlined),
-          selectedIcon: Icon(Icons.account_balance_wallet),
-          label: Text('Books'),
-        ),
-        NavigationRailDestination(
-          icon: Icon(Icons.candlestick_chart_outlined),
-          selectedIcon: Icon(Icons.candlestick_chart),
-          label: Text('Live'),
-        ),
-        NavigationRailDestination(
-          icon: Icon(Icons.science_outlined),
-          selectedIcon: Icon(Icons.science),
-          label: Text('Trade'),
-        ),
-        NavigationRailDestination(
-          icon: Icon(Icons.insights_outlined),
-          selectedIcon: Icon(Icons.insights),
-          label: Text('Stats'),
-        ),
-        NavigationRailDestination(
-          icon: Icon(Icons.settings_outlined),
-          selectedIcon: Icon(Icons.settings),
-          label: Text('Settings'),
-        ),
-      ],
-    );
-  }
-}
-
-class _TopBar extends StatelessWidget {
-  final String title;
-  const _TopBar({required this.title});
+  static const List<(IconData, IconData, String)> _items = [
+    (Icons.dashboard_outlined, Icons.dashboard, 'Home'),
+    (Icons.account_balance_wallet_outlined, Icons.account_balance_wallet,
+        'Books'),
+    (Icons.candlestick_chart_outlined, Icons.candlestick_chart, 'Live'),
+    (Icons.science_outlined, Icons.science, 'Trade'),
+    (Icons.insights_outlined, Icons.insights, 'Stats'),
+    (Icons.settings_outlined, Icons.settings, 'Settings'),
+  ];
 
   @override
   Widget build(BuildContext context) {
     final pal = context.nqe;
     return Container(
-      height: 56,
+      height: 52,
       color: pal.surface,
-      padding: const EdgeInsets.symmetric(horizontal: 20),
+      padding: const EdgeInsets.symmetric(horizontal: 14),
       child: Row(
         children: [
-          Text(
-            title,
-            style: TextStyle(
-              color: pal.textHi,
-              fontSize: 18,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.3,
+          NqeLogo(scale: 0.19, showTagline: false),
+          const SizedBox(width: 18),
+          for (var i = 0; i < _items.length; i++)
+            Padding(
+              padding: const EdgeInsets.only(right: 2),
+              child: _NavItem(
+                icon: _items[i].$1,
+                selectedIcon: _items[i].$2,
+                label: _items[i].$3,
+                selected: i == index,
+                onTap: () => onChanged(i),
+              ),
             ),
-          ),
           const Spacer(),
           ListenableBuilder(
             listenable: SyncClient.instance,
@@ -462,6 +387,54 @@ class _TopBar extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _NavItem extends StatelessWidget {
+  final IconData icon;
+  final IconData selectedIcon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  const _NavItem({
+    required this.icon,
+    required this.selectedIcon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = context.nqe;
+    final c = selected ? pal.textHi : pal.textLo;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected ? pal.textHi.withOpacity(0.08) : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(selected ? selectedIcon : icon, size: 17, color: c),
+            const SizedBox(width: 7),
+            Text(
+              label,
+              style: TextStyle(
+                color: c,
+                fontSize: 13,
+                fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

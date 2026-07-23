@@ -17,6 +17,19 @@ import 'sim_price.dart';
 /// Global singleton (mirrors the real-ledger `appState`).
 final SimState simState = SimState();
 
+/// A price level the order ticket wants drawn on the chart (the limit/stop/TP
+/// price the user is typing). Null when there's nothing to preview. The chart
+/// listens to this and paints a coloured line at the level, like Binance.
+class SimOrderLine {
+  final String symbol;
+  final double price;
+  final bool isBuy;
+  const SimOrderLine(this.symbol, this.price, this.isBuy);
+}
+
+/// Shared, lightweight channel between the order ticket and the chart.
+final ValueNotifier<SimOrderLine?> simOrderLine = ValueNotifier(null);
+
 enum SimNoticeType { filled, stopHit, tpHit, liquidation, info }
 
 class SimNotice {

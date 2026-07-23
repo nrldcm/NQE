@@ -95,65 +95,60 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
+        // Binance-style chart toolbar: a compact timeframe SELECT, the
+        // Indicators tool, and (room for) more chart tools, all in one row.
         Row(
           children: [
-            Expanded(child: _ohlcBar(context, shown)),
-            InkWell(
-              onTap: _openIndicators,
-              borderRadius: BorderRadius.circular(6),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.candlestick_chart_outlined,
-                        size: 14, color: pal.textLo),
-                    const SizedBox(width: 4),
-                    Text('Indicators',
-                        style: TextStyle(
-                            color: pal.textLo,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600)),
-                  ],
-                ),
-              ),
-            ),
+            _tfDropdown(context),
+            const SizedBox(width: 8),
+            _toolButton(context, Icons.candlestick_chart_outlined, 'Indicators',
+                _openIndicators),
+            const Spacer(),
           ],
         ),
+        const SizedBox(height: 6),
+        _ohlcBar(context, shown),
         const SizedBox(height: 4),
         SizedBox(
           height: totalHeight,
-          child: LayoutBuilder(
-            builder: (context, c) {
-              return GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTapDown: (d) =>
-                    _updateCross(d.localPosition.dx, c.maxWidth, candles.length),
-                onHorizontalDragUpdate: (d) =>
-                    _updateCross(d.localPosition.dx, c.maxWidth, candles.length),
-                onHorizontalDragEnd: (_) => setState(() => _cross = null),
-                onTap: () => setState(() => _cross = null),
-                child: CustomPaint(
-                  size: Size(c.maxWidth, totalHeight),
-                  painter: _CandlePainter(
-                    candles: candles,
-                    market: widget.market,
-                    tf: _tf,
-                    cross: _cross,
-                    data: data,
-                    mainHeight: widget.height,
-                    up: NqeColors.gain,
-                    down: NqeColors.loss,
-                    grid: pal.line,
-                    textColor: pal.textLo,
-                  ),
-                ),
+          child: ValueListenableBuilder<SimOrderLine?>(
+            valueListenable: simOrderLine,
+            builder: (context, ol, _) {
+              // Only the price line for THIS symbol is drawn here.
+              final line = (ol != null && ol.symbol == widget.symbol) ? ol : null;
+              return LayoutBuilder(
+                builder: (context, c) {
+                  return GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTapDown: (d) => _updateCross(
+                        d.localPosition.dx, c.maxWidth, candles.length),
+                    onHorizontalDragUpdate: (d) => _updateCross(
+                        d.localPosition.dx, c.maxWidth, candles.length),
+                    onHorizontalDragEnd: (_) => setState(() => _cross = null),
+                    onTap: () => setState(() => _cross = null),
+                    child: CustomPaint(
+                      size: Size(c.maxWidth, totalHeight),
+                      painter: _CandlePainter(
+                        candles: candles,
+                        market: widget.market,
+                        tf: _tf,
+                        cross: _cross,
+                        data: data,
+                        mainHeight: widget.height,
+                        up: NqeColors.gain,
+                        down: NqeColors.loss,
+                        grid: pal.line,
+                        textColor: pal.textLo,
+                        orderLine: line?.price,
+                        orderUp: line?.isBuy ?? true,
+                      ),
+                    ),
+                  );
+                },
               );
             },
           ),
         ),
-        const SizedBox(height: 8),
-        _selector(context),
       ],
     );
   }
@@ -251,41 +246,84 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
     );
   }
 
-  Widget _selector(BuildContext context) {
+  /// Compact timeframe SELECT (Binance-style): shows the current interval and
+  /// opens a menu of all timeframes — far tidier than a full chip row.
+  Widget _tfDropdown(BuildContext context) {
     final pal = context.nqe;
-    return SizedBox(
-      height: 30,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        children: [
-          for (final tf in Timeframe.values)
-            Padding(
-              padding: const EdgeInsets.only(right: 6),
-              child: GestureDetector(
-                onTap: () => setState(() {
-                  _tf = tf;
-                  _cross = null;
-                }),
-                child: Container(
-                  alignment: Alignment.center,
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  decoration: BoxDecoration(
-                    color:
-                        tf == _tf ? pal.textHi.withOpacity(0.12) : pal.surface2,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                        color:
-                            tf == _tf ? pal.textHi.withOpacity(0.4) : pal.line),
-                  ),
-                  child: Text(tf.label,
-                      style: TextStyle(
-                          color: tf == _tf ? pal.textHi : pal.textLo,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700)),
-                ),
-              ),
-            ),
-        ],
+    return PopupMenuButton<Timeframe>(
+      tooltip: 'Timeframe',
+      initialValue: _tf,
+      color: pal.surface,
+      position: PopupMenuPosition.under,
+      onSelected: (tf) => setState(() {
+        _tf = tf;
+        _cross = null;
+      }),
+      itemBuilder: (context) => [
+        for (final tf in Timeframe.values)
+          PopupMenuItem<Timeframe>(
+            value: tf,
+            height: 40,
+            child: Text(tf.label,
+                style: TextStyle(
+                    color: tf == _tf ? pal.textHi : pal.textLo,
+                    fontWeight: tf == _tf ? FontWeight.w800 : FontWeight.w600)),
+          ),
+      ],
+      child: Container(
+        height: 30,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        decoration: BoxDecoration(
+          color: pal.surface2,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: pal.line),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.schedule, size: 13, color: pal.textLo),
+            const SizedBox(width: 6),
+            Text(_tf.label,
+                style: TextStyle(
+                    color: pal.textHi,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700)),
+            const SizedBox(width: 2),
+            Icon(Icons.keyboard_arrow_down, size: 16, color: pal.textLo),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// A framed toolbar button matching the timeframe select's height/shape, so
+  /// the chart toolbar reads as one consistent row of controls.
+  Widget _toolButton(BuildContext context, IconData icon, String label,
+      VoidCallback onTap) {
+    final pal = context.nqe;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        height: 30,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        decoration: BoxDecoration(
+          color: pal.surface2,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: pal.line),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 13, color: pal.textLo),
+            const SizedBox(width: 6),
+            Text(label,
+                style: TextStyle(
+                    color: pal.textHi,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600)),
+          ],
+        ),
       ),
     );
   }
@@ -312,6 +350,10 @@ class _CandlePainter extends CustomPainter {
   final double mainHeight;
   final Color up, down, grid, textColor;
 
+  /// A pending-order price level to draw (from the ticket), and its side colour.
+  final double? orderLine;
+  final bool orderUp;
+
   _CandlePainter({
     required this.candles,
     required this.market,
@@ -323,6 +365,8 @@ class _CandlePainter extends CustomPainter {
     required this.down,
     required this.grid,
     required this.textColor,
+    this.orderLine,
+    this.orderUp = true,
   });
 
   static const double _rightAxis = 58;
@@ -353,6 +397,11 @@ class _CandlePainter extends CustomPainter {
         if (u != null && u > hi) hi = u;
         if (l != null && l < lo) lo = l;
       }
+    }
+    // Keep the pending-order line in view — scale the panel to include it.
+    if (orderLine != null && orderLine!.isFinite && orderLine! > 0) {
+      if (orderLine! > hi) hi = orderLine!;
+      if (orderLine! < lo) lo = orderLine!;
     }
     if (!(hi > lo)) hi = lo + (lo.abs() * 0.01 + 1);
     final pad = (hi - lo) * 0.08;
@@ -410,6 +459,19 @@ class _CandlePainter extends CustomPainter {
         Paint()..color = lastCol);
     _text(canvas, fmtPrice(last.c, market), Offset(plotW + 3, lastY - 6),
         Colors.white, 9, bold: true);
+
+    // Pending-order price line (from the ticket): a solid coloured line with a
+    // right-edge tag so the user sees exactly where their limit/stop sits.
+    if (orderLine != null && orderLine!.isFinite && orderLine! > 0) {
+      final oy = my(orderLine!);
+      final oc = orderUp ? up : down;
+      canvas.drawLine(Offset(0, oy), Offset(plotW, oy),
+          Paint()..color = oc..strokeWidth = 1.2);
+      canvas.drawRect(Rect.fromLTWH(plotW, oy - 8, _rightAxis, 16),
+          Paint()..color = oc);
+      _text(canvas, fmtPrice(orderLine!, market), Offset(plotW + 3, oy - 6),
+          Colors.white, 9, bold: true);
+    }
 
     // ---- sub-panels ----
     var top = mainH + _subGap;

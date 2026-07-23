@@ -62,10 +62,32 @@ class _SandboxTradeTicketState extends State<SandboxTradeTicket> {
 
   @override
   void dispose() {
+    // Remove our price line from the chart when the ticket goes away.
+    if (simOrderLine.value?.symbol == widget.symbol) simOrderLine.value = null;
     _qtyCtrl.dispose();
     _limitCtrl.dispose();
     _stopCtrl.dispose();
     super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant SandboxTradeTicket old) {
+    super.didUpdateWidget(old);
+    if (old.symbol != widget.symbol) _syncOrderLine();
+  }
+
+  /// Publish (or clear) the limit/stop/TP price the user is typing so the chart
+  /// can draw a line at that level — like placing an order on Binance.
+  void _syncOrderLine() {
+    double? p;
+    if (_type == OrderType.limit) {
+      p = double.tryParse(_limitCtrl.text.trim());
+    } else if (_type == OrderType.stop || _type == OrderType.takeProfit) {
+      p = double.tryParse(_stopCtrl.text.trim());
+    }
+    simOrderLine.value = (p != null && p > 0)
+        ? SimOrderLine(widget.symbol, p, _side == OrderSide.buy)
+        : null;
   }
 
   double get _lev => _mode == TradeMode.margin ? _leverage : 1.0;
@@ -90,9 +112,15 @@ class _SandboxTradeTicketState extends State<SandboxTradeTicket> {
   }
 
   void _setQtyPct(double pct) {
-    final price = _refPrice;
-    final max = _maxQty(price);
-    final q = max * pct;
+    double q;
+    // Selling reduces a holding — so %/Max is a slice of what you actually
+    // hold (Max = sell everything). Buying (or opening a short with nothing
+    // held) is instead bounded by buying power.
+    if (_side == OrderSide.sell && _holdingQty > 0) {
+      q = _holdingQty * pct;
+    } else {
+      q = _maxQty(_refPrice) * pct;
+    }
     _qtyCtrl.text = _market == SimMarket.crypto
         ? q.toStringAsFixed(4)
         : q.floor().toString();
@@ -168,6 +196,7 @@ class _SandboxTradeTicketState extends State<SandboxTradeTicket> {
     final verb = _type == OrderType.market ? 'submitted' : 'placed';
     _toast('${_side == OrderSide.buy ? 'Buy' : 'Sell'} order $verb.');
     _qtyCtrl.clear();
+    if (simOrderLine.value?.symbol == widget.symbol) simOrderLine.value = null;
     if (widget.popOnSuccess && Navigator.of(context).canPop()) {
       Navigator.of(context).pop();
     }
@@ -274,7 +303,10 @@ class _SandboxTradeTicketState extends State<SandboxTradeTicket> {
                   label: _mode == TradeMode.margin ? 'Buy / Long' : 'Buy',
                   color: NqeColors.gain,
                   selected: buy,
-                  onTap: () => setState(() => _side = OrderSide.buy),
+                  onTap: () {
+                    setState(() => _side = OrderSide.buy);
+                    _syncOrderLine();
+                  },
                 ),
               ),
               const SizedBox(width: 10),
@@ -291,6 +323,7 @@ class _SandboxTradeTicketState extends State<SandboxTradeTicket> {
                       return;
                     }
                     setState(() => _side = OrderSide.sell);
+                    _syncOrderLine();
                   },
                 ),
               ),
@@ -307,7 +340,10 @@ class _SandboxTradeTicketState extends State<SandboxTradeTicket> {
               OrderType.stop: 'Stop',
               OrderType.takeProfit: 'TP',
             },
-            onChanged: (t) => setState(() => _type = t),
+            onChanged: (t) {
+              setState(() => _type = t);
+              _syncOrderLine();
+            },
           ),
           const SizedBox(height: 12),
 
@@ -443,7 +479,10 @@ class _SandboxTradeTicketState extends State<SandboxTradeTicket> {
         child: TextField(
           controller: c,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          onChanged: (_) => setState(() {}),
+          onChanged: (_) {
+            setState(() {});
+            _syncOrderLine();
+          },
           decoration: InputDecoration(labelText: label, isDense: true),
         ),
       );
