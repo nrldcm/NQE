@@ -290,7 +290,7 @@ class _DesktopShellState extends State<DesktopShell> {
     'Dashboard',
     'Books',
     'Live',
-    'Sandbox',
+    'Trade',
     'Statistics',
     'Settings'
   ];
@@ -414,7 +414,7 @@ class _NavRail extends StatelessWidget {
         NavigationRailDestination(
           icon: Icon(Icons.science_outlined),
           selectedIcon: Icon(Icons.science),
-          label: Text('Sandbox'),
+          label: Text('Trade'),
         ),
         NavigationRailDestination(
           icon: Icon(Icons.insights_outlined),
