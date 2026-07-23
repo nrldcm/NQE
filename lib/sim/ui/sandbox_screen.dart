@@ -12,7 +12,7 @@ import '../sim_models.dart';
 import '../sim_market.dart';
 import '../sim_state.dart';
 import 'sandbox_analytics_panel.dart';
-import 'sandbox_candle_chart.dart';
+import 'sandbox_chart_pane.dart';
 import 'sandbox_common.dart';
 import 'sandbox_market_panel.dart';
 import 'sandbox_notices.dart';
@@ -141,7 +141,7 @@ class _SandboxScreenState extends State<SandboxScreen>
             tabs: const [
               Tab(text: 'Trade'),
               Tab(text: 'Positions'),
-              Tab(text: 'History'),
+              Tab(text: 'Books'),
               Tab(text: 'Markets'),
             ],
           ),
@@ -184,8 +184,8 @@ class _SandboxScreenState extends State<SandboxScreen>
         const SizedBox(height: 10),
         SimCard(
           padding: const EdgeInsets.fromLTRB(10, 10, 10, 8),
-          child: SandboxCandleChart(
-              symbol: _symbol, market: _market, height: 220),
+          child: SandboxChartPane(
+              symbol: _symbol, market: _market, height: 240),
         ),
         const SizedBox(height: 12),
         SandboxTradeTicket(symbol: _symbol),
@@ -225,7 +225,7 @@ class _SandboxScreenState extends State<SandboxScreen>
                       const SizedBox(height: 12),
                       SimCard(
                         padding: const EdgeInsets.fromLTRB(10, 12, 12, 8),
-                        child: SandboxCandleChart(
+                        child: SandboxChartPane(
                             symbol: _symbol, market: _market, height: 300),
                       ),
                       const SizedBox(height: 12),

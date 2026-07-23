@@ -31,7 +31,7 @@ class SandboxAnalyticsPanel extends StatelessWidget {
         return ListView(
           padding: const EdgeInsets.only(bottom: 24),
           children: [
-            const SectionTitle('Performance'),
+            const SectionTitle('Overview'),
             GridView.count(
               crossAxisCount: 2,
               shrinkWrap: true,

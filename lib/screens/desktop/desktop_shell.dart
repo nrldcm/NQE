@@ -155,7 +155,122 @@ class _DesktopBootstrapState extends State<_DesktopBootstrap> {
     if (_locked && !_unlocked) {
       return DesktopLock(onUnlocked: () => setState(() => _unlocked = true));
     }
-    return const DesktopShell();
+
+    // Paired + unlocked. Gate the workspace on a live link: once the connection
+    // gives up (disconnected), fall back to a reconnect / re-pair screen so a
+    // stale, unsynced desktop can't be mistaken for a live one.
+    return ListenableBuilder(
+      listenable: SyncClient.instance,
+      builder: (context, _) {
+        if (SyncClient.instance.state == SyncConn.disconnected) {
+          return _ReconnectGate(
+            message: SyncClient.instance.statusMessage,
+            onRetry: () => SyncClient.instance.reconnect(),
+            onRepair: () {
+              // Send the user back to the pairing gate to re-pair the device.
+              setState(() {
+                _paired = false;
+                _unlocked = false;
+              });
+            },
+          );
+        }
+        return const DesktopShell();
+      },
+    );
+  }
+}
+
+/// Shown on the desktop when the link to the phone has dropped: it keeps
+/// auto-reconnecting in the background, and offers a manual retry or a jump back
+/// to the re-pair gate.
+class _ReconnectGate extends StatelessWidget {
+  final String? message;
+  final VoidCallback onRetry;
+  final VoidCallback onRepair;
+  const _ReconnectGate({
+    required this.message,
+    required this.onRetry,
+    required this.onRepair,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = context.nqe;
+    return Scaffold(
+      backgroundColor: pal.bg,
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Padding(
+            padding: const EdgeInsets.all(28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.link_off, size: 48, color: pal.textLo),
+                const SizedBox(height: 18),
+                Text('Disconnected from phone',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                        color: pal.textHi,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800)),
+                const SizedBox(height: 8),
+                Text(
+                  message ??
+                      'The desktop lost its link to the phone. It keeps trying '
+                          'to reconnect automatically.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: pal.textLo, fontSize: 13),
+                ),
+                const SizedBox(height: 20),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor:
+                              AlwaysStoppedAnimation<Color>(pal.textLo)),
+                    ),
+                    const SizedBox(width: 10),
+                    Text('Reconnecting…',
+                        style: TextStyle(color: pal.textLo, fontSize: 12)),
+                  ],
+                ),
+                const SizedBox(height: 24),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: onRetry,
+                        icon: const Icon(Icons.refresh, size: 18),
+                        label: const Text('Try now'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: pal.textHi,
+                          side: BorderSide(color: pal.line),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: onRepair,
+                        icon: const Icon(Icons.qr_code_scanner, size: 18),
+                        label: const Text('Re-pair device'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 
