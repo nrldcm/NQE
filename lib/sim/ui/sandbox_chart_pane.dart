@@ -55,8 +55,10 @@ class _SandboxChartPaneState extends State<SandboxChartPane> {
           ),
         if (tradingViewSupported) const SizedBox(height: 8),
         if (_tv && tradingViewSupported)
+          // Match the built-in chart's overall footprint (chart + OHLC bar +
+          // timeframe row) so switching modes doesn't resize the card.
           SandboxTradingViewChart(
-              symbol: widget.symbol, height: widget.height + 30)
+              symbol: widget.symbol, height: widget.height + 62)
         else
           SandboxCandleChart(
               symbol: widget.symbol,
