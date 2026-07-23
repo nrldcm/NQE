@@ -26,9 +26,19 @@ class SimDb {
   Future<Database> get db async => _db ??= await _open();
 
   Future<Database> _open() async {
-    // The desktop mirror keeps no persistent database — a fresh in-memory one
-    // every launch, populated purely by what the phone syncs over.
-    if (ephemeral) return openAtPath(inMemoryDatabasePath);
+    // The desktop mirror keeps no persistent database — a scratch file in the
+    // temp dir that's WIPED on every launch, so it starts empty and is filled
+    // purely by what the phone syncs over. (A raw ':memory:' DB is unreliable
+    // with sqflite migrations — onCreate can be lost — so a deleted-on-open
+    // temp file gives the same ephemerality with a guaranteed schema.)
+    if (ephemeral) {
+      final tmp = await getTemporaryDirectory();
+      final path = p.join(tmp.path, 'nqe_sandbox_mirror.db');
+      try {
+        await deleteDatabase(path);
+      } catch (_) {/* first run — nothing to delete */}
+      return openAtPath(path);
+    }
     final dir = await getApplicationDocumentsDirectory();
     final path = p.join(dir.path, 'nqe_sandbox.db');
     return openAtPath(path);

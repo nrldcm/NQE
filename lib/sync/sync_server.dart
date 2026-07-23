@@ -31,6 +31,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../services/auth_service.dart';
 import '../services/crypto_service.dart';
+import '../services/error_log.dart';
 import '../sim/sim_state.dart';
 import '../sim/sim_sync.dart';
 import '../state/app_state.dart';
@@ -506,8 +507,10 @@ class SyncServer extends ChangeNotifier {
 
             // Authenticated data frame: encrypted remote payload.
             await _applyRemoteFrame(frame);
-          } catch (e) {
+          } catch (e, s) {
             lastError = 'Sync frame error: $e';
+            unawaited(ErrorLog.instance
+                .log('Sync frame error (server)', error: e, stack: s));
             notifyListeners();
           }
         },

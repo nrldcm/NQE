@@ -449,6 +449,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _themeTile(
                     ThemeMode.system, Icons.brightness_auto, 'System', pal),
               ]),
+              // Security (lock / PIN / biometric) is managed on the phone; the
+              // desktop just mirrors it, so hide the whole section there.
+              if (!_isDesktop) ...[
               const SizedBox(height: 20),
               _sectionLabel('Security', pal),
               _card(pal, [
@@ -460,19 +463,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   value: _lock,
                   onChanged: _toggleLock,
                 ),
-                _divider(pal),
-                SwitchListTile(
-                  secondary: Icon(Icons.fingerprint, color: pal.textHi),
-                  title: Text('Biometric unlock',
-                      style: TextStyle(color: pal.textHi)),
-                  subtitle: Text(
-                      _canBio
-                          ? 'Fingerprint / face / device PIN'
-                          : 'Not available on this device',
-                      style: TextStyle(color: pal.textLo, fontSize: 12)),
-                  value: _bio && _canBio,
-                  onChanged: (_lock && _canBio) ? _toggleBio : null,
-                ),
+                // Biometric unlock is a phone capability — hidden on desktop.
+                if (!_isDesktop) ...[
+                  _divider(pal),
+                  SwitchListTile(
+                    secondary: Icon(Icons.fingerprint, color: pal.textHi),
+                    title: Text('Biometric unlock',
+                        style: TextStyle(color: pal.textHi)),
+                    subtitle: Text(
+                        _canBio
+                            ? 'Fingerprint / face / device PIN'
+                            : 'Not available on this device',
+                        style: TextStyle(color: pal.textLo, fontSize: 12)),
+                    value: _bio && _canBio,
+                    onChanged: (_lock && _canBio) ? _toggleBio : null,
+                  ),
+                ],
                 _divider(pal),
                 ListTile(
                   leading: Icon(Icons.pin_outlined, color: pal.textHi),
@@ -485,43 +491,48 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   },
                 ),
               ]),
+              ],
               const SizedBox(height: 20),
               _sectionLabel('Desktop Mode', pal),
               _deviceSyncSection(pal),
-              const SizedBox(height: 20),
-              _sectionLabel('Backup', pal),
-              _card(pal, [
-                ListTile(
-                  leading: Icon(Icons.ios_share, color: pal.textHi),
-                  title: Text('Export encrypted backup',
-                      style: TextStyle(color: pal.textHi)),
-                  subtitle: Text('Share to Google Drive, Files, etc. (.nqe)',
-                      style: TextStyle(color: pal.textLo, fontSize: 12)),
-                  onTap: _busy ? null : _export,
-                ),
-                _divider(pal),
-                ListTile(
-                  leading: Icon(Icons.download_outlined, color: pal.textHi),
-                  title: Text('Restore from backup',
-                      style: TextStyle(color: pal.textHi)),
-                  subtitle: Text('Import a .nqe file (replaces data)',
-                      style: TextStyle(color: pal.textLo, fontSize: 12)),
-                  onTap: _busy ? null : _import,
-                ),
-                _divider(pal),
-                ListTile(
-                  leading: Icon(Icons.password, color: pal.textHi),
-                  title: Text('Backup passphrase',
-                      style: TextStyle(color: pal.textHi)),
-                  subtitle: Text(
-                      _exportPass.isEmpty
-                          ? 'Off — app-only encryption'
-                          : 'On — backups require your passphrase',
-                      style: TextStyle(color: pal.textLo, fontSize: 12)),
-                  trailing: Icon(Icons.chevron_right, color: pal.textLo),
-                  onTap: _setBackupPassphrase,
-                ),
-              ]),
+              // Backup lives on the phone (the source of truth); the desktop is
+              // a stateless mirror, so hide the whole Backup section there.
+              if (!_isDesktop) ...[
+                const SizedBox(height: 20),
+                _sectionLabel('Backup', pal),
+                _card(pal, [
+                  ListTile(
+                    leading: Icon(Icons.ios_share, color: pal.textHi),
+                    title: Text('Export encrypted backup',
+                        style: TextStyle(color: pal.textHi)),
+                    subtitle: Text('Share to Google Drive, Files, etc. (.nqe)',
+                        style: TextStyle(color: pal.textLo, fontSize: 12)),
+                    onTap: _busy ? null : _export,
+                  ),
+                  _divider(pal),
+                  ListTile(
+                    leading: Icon(Icons.download_outlined, color: pal.textHi),
+                    title: Text('Restore from backup',
+                        style: TextStyle(color: pal.textHi)),
+                    subtitle: Text('Import a .nqe file (replaces data)',
+                        style: TextStyle(color: pal.textLo, fontSize: 12)),
+                    onTap: _busy ? null : _import,
+                  ),
+                  _divider(pal),
+                  ListTile(
+                    leading: Icon(Icons.password, color: pal.textHi),
+                    title: Text('Backup passphrase',
+                        style: TextStyle(color: pal.textHi)),
+                    subtitle: Text(
+                        _exportPass.isEmpty
+                            ? 'Off — app-only encryption'
+                            : 'On — backups require your passphrase',
+                        style: TextStyle(color: pal.textLo, fontSize: 12)),
+                    trailing: Icon(Icons.chevron_right, color: pal.textLo),
+                    onTap: _setBackupPassphrase,
+                  ),
+                ]),
+              ],
               const SizedBox(height: 20),
               _sectionLabel('About', pal),
               _card(pal, [
@@ -533,32 +544,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       MaterialPageRoute(builder: (_) => const AboutScreen())),
                 ),
               ]),
-              const SizedBox(height: 20),
-              _sectionLabel('Developer', pal),
-              _card(pal, [
-                SwitchListTile(
-                  secondary: Icon(Icons.code, color: pal.textHi),
-                  title: Text('Developer Mode',
-                      style: TextStyle(color: pal.textHi)),
-                  subtitle: Text('Integrations & API keys',
-                      style: TextStyle(color: pal.textLo, fontSize: 12)),
-                  value: _devMode,
-                  onChanged: _setDevMode,
-                ),
-                if (_devMode) ...[
-                  _divider(pal),
-                  ListTile(
-                    leading: Icon(Icons.vpn_key_outlined, color: pal.textHi),
-                    title: Text('Integrations & API keys',
+              // Developer / API-key setup belongs on the phone, not the mirror.
+              if (!_isDesktop) ...[
+                const SizedBox(height: 20),
+                _sectionLabel('Developer', pal),
+                _card(pal, [
+                  SwitchListTile(
+                    secondary: Icon(Icons.code, color: pal.textHi),
+                    title: Text('Developer Mode',
                         style: TextStyle(color: pal.textHi)),
-                    subtitle: Text('Enter API keys used by live data / trading',
+                    subtitle: Text('Integrations & API keys',
                         style: TextStyle(color: pal.textLo, fontSize: 12)),
-                    trailing: Icon(Icons.chevron_right, color: pal.textLo),
-                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => const DeveloperScreen())),
+                    value: _devMode,
+                    onChanged: _setDevMode,
                   ),
-                ],
-              ]),
+                  if (_devMode) ...[
+                    _divider(pal),
+                    ListTile(
+                      leading: Icon(Icons.vpn_key_outlined, color: pal.textHi),
+                      title: Text('Integrations & API keys',
+                          style: TextStyle(color: pal.textHi)),
+                      subtitle: Text(
+                          'Enter API keys used by live data / trading',
+                          style: TextStyle(color: pal.textLo, fontSize: 12)),
+                      trailing: Icon(Icons.chevron_right, color: pal.textLo),
+                      onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                          builder: (_) => const DeveloperScreen())),
+                    ),
+                  ],
+                ]),
+              ],
               if (_busy)
                 const Padding(
                   padding: EdgeInsets.only(top: 24),
@@ -586,6 +601,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
               subtitle: Text(c.statusMessage ?? 'Paired with your phone',
                   style: TextStyle(color: pal.textLo, fontSize: 12)),
               trailing: ConnectionWatcher(c.state, attempt: c.attempt),
+            ),
+            _divider(pal),
+            ListTile(
+              leading: Icon(Icons.sync_alt, color: pal.textHi),
+              title: Text('Sync now', style: TextStyle(color: pal.textHi)),
+              subtitle: Text('Force a fresh pull from your phone',
+                  style: TextStyle(color: pal.textLo, fontSize: 12)),
+              trailing: Icon(Icons.refresh, color: pal.textLo),
+              onTap: () async {
+                await SyncClient.instance.syncNow();
+                _snack('Syncing with your phone…');
+              },
             ),
             _divider(pal),
             ListTile(

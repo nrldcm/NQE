@@ -47,12 +47,21 @@ class LedgerDb {
   }
 
   Future<Database> _open() async {
-    // Desktop mirror: a fresh in-memory ledger every launch, populated purely
-    // by what the phone syncs over — nothing is written to disk.
-    final path = ephemeral
-        ? inMemoryDatabasePath
-        : p.join((await getApplicationDocumentsDirectory()).path,
-            'nqe_ledger.db');
+    // Desktop mirror: a scratch ledger file WIPED on every launch, so it starts
+    // empty and is filled purely by what the phone syncs over — nothing
+    // persists. (A temp file rather than ':memory:', whose onCreate is
+    // unreliable with sqflite migrations.)
+    String path;
+    if (ephemeral) {
+      final tmp = await getTemporaryDirectory();
+      path = p.join(tmp.path, 'nqe_ledger_mirror.db');
+      try {
+        await deleteDatabase(path);
+      } catch (_) {/* first run — nothing to delete */}
+    } else {
+      path = p.join(
+          (await getApplicationDocumentsDirectory()).path, 'nqe_ledger.db');
+    }
     return openDatabase(
       path,
       version: _kDbSchemaVersion,

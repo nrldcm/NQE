@@ -9,6 +9,7 @@ import 'package:windows_single_instance/windows_single_instance.dart';
 
 import 'db/database.dart';
 import 'services/auth_service.dart';
+import 'services/error_log.dart';
 import 'sim/sim_db.dart';
 import 'sim/sim_state.dart';
 import 'screens/desktop/desktop_shell.dart';
@@ -20,6 +21,8 @@ import 'theme.dart';
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Route uncaught framework/platform errors to the on-device rotating log.
+  ErrorLog.instance.installGlobalHandlers();
 
   final isDesktop = !kIsWeb &&
       (Platform.isWindows || Platform.isLinux || Platform.isMacOS);

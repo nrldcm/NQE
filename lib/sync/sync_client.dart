@@ -24,6 +24,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../services/crypto_service.dart';
+import '../services/error_log.dart';
 import '../sim/sim_state.dart';
 import '../sim/sim_sync.dart';
 import '../state/app_state.dart';
@@ -179,6 +180,16 @@ class SyncClient extends ChangeNotifier {
     await _open();
   }
 
+  /// Force a sync now: if live, push our snapshot (the phone echoes its full
+  /// state back); otherwise reconnect. Used by the desktop's "Sync now" button.
+  Future<void> syncNow() async {
+    if (state == SyncConn.connected && _channel != null && _authed) {
+      await _pushSnapshot(force: true);
+    } else {
+      await reconnect();
+    }
+  }
+
   /// Tear down the connection and stop all timers. No further auto-reconnect.
   void disconnect() {
     _manuallyClosed = true;
@@ -261,9 +272,11 @@ class SyncClient extends ChangeNotifier {
       await appState.load();
       // Reply with our latest snapshot so the peer converges too.
       await _pushSnapshot();
-    } catch (e) {
+    } catch (e, s) {
       // A single bad frame shouldn't drop the link — log via status and go on.
       statusMessage = 'Sync frame error: $e';
+      unawaited(ErrorLog.instance.log('Sync frame error (client)',
+          error: e, stack: s));
       notifyListeners();
     }
   }
