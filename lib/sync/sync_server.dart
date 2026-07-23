@@ -23,8 +23,8 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:network_info_plus/network_info_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shelf/shelf.dart';
-import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_web_socket/shelf_web_socket.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
@@ -32,6 +32,7 @@ import '../services/auth_service.dart';
 import '../services/crypto_service.dart';
 import '../state/app_state.dart';
 import 'foreground.dart';
+import 'net_util.dart';
 import 'pairing.dart';
 import 'sync_engine.dart';
 import 'sync_repo.dart';
@@ -44,12 +45,20 @@ class SyncServer extends ChangeNotifier {
   SyncServer._();
   static final SyncServer instance = SyncServer._();
 
-  /// Default LAN port. Kept fixed so the QR pairing URI is predictable.
+  /// Default LAN port — the preferred one to bind. If it is busy/blocked the
+  /// server auto-scans upward for an open port (see [bindWithFallback]) and the
+  /// actually-bound [port] is what gets advertised in the QR.
   static const int defaultPort = 8787;
+  static const _prefsPortKey = 'nqe.sync.port';
 
   SyncStatus status = SyncStatus.stopped;
   PeerState peer = PeerState.idle;
   String? host;
+
+  /// Preferred port to try first (user-configurable). Persisted.
+  int preferredPort = defaultPort;
+
+  /// The port actually bound (== preferredPort unless it was busy/blocked).
   int port = defaultPort;
   int connectedPeers = 0;
 
@@ -166,12 +175,15 @@ class SyncServer extends ChangeNotifier {
     notifyListeners();
 
     try {
+      await _loadPreferredPort();
       host = await _resolveWifiIp();
       _pairingKey = _generateKey();
 
       final handler = _buildHandler();
-      _server = await shelf_io.serve(handler, '0.0.0.0', port);
-      // Be tolerant of proxies / relays.
+      // Auto-scan for an open port starting at the preferred one, so a busy or
+      // firewalled port doesn't break pairing. The bound port is advertised.
+      _server = await bindWithFallback(handler, preferredPort);
+      port = _server!.port;
       _server!.autoCompress = true;
 
       status = SyncStatus.running;
@@ -206,6 +218,31 @@ class SyncServer extends ChangeNotifier {
     notifyListeners();
 
     await stopForeground();
+  }
+
+  /// Set the preferred sync port (persisted). Restarts the server if running so
+  /// the new port takes effect and is re-advertised.
+  Future<void> setPreferredPort(int p) async {
+    preferredPort = sanitizePort(p, fallback: defaultPort);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(_prefsPortKey, preferredPort);
+    } catch (_) {/* best-effort */}
+    if (isRunning) {
+      await stop();
+      await start();
+    } else {
+      notifyListeners();
+    }
+  }
+
+  Future<void> _loadPreferredPort() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      preferredPort = prefs.getInt(_prefsPortKey) ?? defaultPort;
+    } catch (_) {
+      preferredPort = defaultPort;
+    }
   }
 
   // --- internals -----------------------------------------------------------

@@ -195,6 +195,51 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Future<void> _editSyncPort() async {
+    final pal = context.nqe;
+    final ctrl = TextEditingController(
+        text: SyncServer.instance.preferredPort.toString());
+    final res = await showDialog<int>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: pal.surface,
+        title: Text('Sync port', style: TextStyle(color: pal.textHi)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Port the phone listens on for the desktop. It auto-scans for an '
+              'open port if this one is busy, so you usually don\'t need to '
+              'change it. The chosen port is embedded in the pairing QR.',
+              style: TextStyle(color: pal.textLo, fontSize: 12),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: ctrl,
+              autofocus: true,
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              decoration:
+                  const InputDecoration(labelText: 'Port (1024–65535)'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () =>
+                  Navigator.pop(context, int.tryParse(ctrl.text.trim())),
+              child: const Text('Apply')),
+        ],
+      ),
+    );
+    if (res == null) return;
+    await SyncServer.instance.setPreferredPort(res);
+    if (mounted) setState(() {});
+  }
+
   Future<void> _openPairDesktop() async {
     await Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const PairDesktopScreen()),
@@ -574,6 +619,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             value: running,
             onChanged: _syncBusy ? null : _toggleServer,
+          ),
+          _divider(pal),
+          ListTile(
+            leading: Icon(Icons.settings_ethernet, color: pal.textHi),
+            title: Text('Sync port', style: TextStyle(color: pal.textHi)),
+            subtitle: Text(
+              running
+                  ? 'Listening on ${s.port}${s.port != s.preferredPort ? ' (auto-picked)' : ''}'
+                  : 'Preferred ${s.preferredPort} · auto-scans for an open port',
+              style: TextStyle(color: pal.textLo, fontSize: 12),
+            ),
+            trailing: Icon(Icons.chevron_right, color: pal.textLo),
+            onTap: _editSyncPort,
           ),
           if (running) ...[
             _divider(pal),

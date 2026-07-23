@@ -12,10 +12,10 @@ import 'dart:io';
 import 'package:cryptography/cryptography.dart' show SimplePublicKey;
 import 'package:flutter/foundation.dart';
 import 'package:shelf/shelf.dart';
-import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_web_socket/shelf_web_socket.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import 'net_util.dart';
 import 'pairing.dart';
 
 enum PairingHostState { idle, listening, received, verifying, paired, error }
@@ -32,8 +32,14 @@ class _Offer {
 class PairingHost extends ChangeNotifier {
   PairingHost();
 
-  /// Desktop pairing port (distinct from the sync port 8787).
-  static const int port = 8788;
+  /// Preferred desktop pairing port (distinct from the sync port 8787). If it
+  /// is busy/blocked the host auto-scans for an open port; [_boundPort] is what
+  /// actually gets advertised in the QR. User-overridable via F12.
+  static const int defaultPort = 8788;
+  int preferredPort = defaultPort;
+  int _boundPort = defaultPort;
+
+  int get port => _boundPort;
 
   PairingHostState state = PairingHostState.idle;
   String? statusMessage;
@@ -45,11 +51,11 @@ class PairingHost extends ChangeNotifier {
   _Offer? _offer;
 
   /// The QR content shown on the desktop and scanned by the phone.
-  /// `nqe://pair?host=<lanIp>&port=<port>&sid=<sid>&pk=<desktopPubKey>`
+  /// `nqe://pair?host=<lanIp>&port=<boundPort>&sid=<sid>&pk=<desktopPubKey>`
   String? get pairingUri {
     final ip = _lanIp, sid = _sid, keys = _keys;
     if (ip == null || sid == null || keys == null) return null;
-    return 'nqe://pair?host=$ip&port=$port&sid=$sid&pk=${keys.publicKeyB64}';
+    return 'nqe://pair?host=$ip&port=$_boundPort&sid=$sid&pk=${keys.publicKeyB64}';
   }
 
   bool get hasOffer => _offer != null;
@@ -71,13 +77,21 @@ class PairingHost extends ChangeNotifier {
       _sid = _randomSid();
 
       final handler = _buildHandler();
-      _server = await shelf_io.serve(handler, '0.0.0.0', port);
+      // Auto-scan for an open port so a busy/blocked one doesn't break pairing.
+      _server = await bindWithFallback(handler, preferredPort);
+      _boundPort = _server!.port;
       _server!.autoCompress = true;
       _set(PairingHostState.listening,
           'Scan this QR from your phone (NQE ▸ Settings ▸ Pair Desktop Device).');
     } catch (e) {
       _set(PairingHostState.error, 'Could not start pairing: $e');
     }
+  }
+
+  /// Override the preferred pairing port (F12) and restart with a fresh QR.
+  Future<void> setPort(int p) async {
+    preferredPort = sanitizePort(p, fallback: defaultPort);
+    await start();
   }
 
   /// Tear down the listener. Called on cancel and after a successful pairing.

@@ -130,6 +130,53 @@ class _DesktopPairingScreenState extends State<DesktopPairingScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
   }
 
+  Future<void> _showPortDialog() async {
+    final pal = context.nqe;
+    final ctrl = TextEditingController(text: _host.preferredPort.toString());
+    final res = await showDialog<int>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: pal.surface,
+        title: Text('Pairing port', style: TextStyle(color: pal.textHi)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Use a port that is open on your network. The app already '
+              'auto-scans for an open port — set one here only if you need a '
+              'specific one.',
+              style: TextStyle(color: pal.textLo, fontSize: 12),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: ctrl,
+              autofocus: true,
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              decoration:
+                  const InputDecoration(labelText: 'Port (1024–65535)'),
+              onSubmitted: (_) =>
+                  Navigator.pop(context, int.tryParse(ctrl.text.trim())),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () =>
+                  Navigator.pop(context, int.tryParse(ctrl.text.trim())),
+              child: const Text('Apply')),
+        ],
+      ),
+    );
+    if (res == null) return;
+    await _host.setPort(res);
+    _startCountdown();
+    if (mounted) setState(() {});
+  }
+
   @override
   Widget build(BuildContext context) {
     final pal = context.nqe;
@@ -137,9 +184,17 @@ class _DesktopPairingScreenState extends State<DesktopPairingScreen> {
     final got = _host.hasOffer;
     final isError = _host.state == PairingHostState.error;
 
-    return Scaffold(
-      backgroundColor: pal.bg,
-      body: Center(
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.f12): () {
+          _showPortDialog();
+        },
+      },
+      child: Focus(
+        autofocus: true,
+        child: Scaffold(
+          backgroundColor: pal.bg,
+          body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(32),
           child: ConstrainedBox(
@@ -170,6 +225,8 @@ class _DesktopPairingScreenState extends State<DesktopPairingScreen> {
                   _codeView(pal),
               ],
             ),
+          ),
+        ),
           ),
         ),
       ),
@@ -218,6 +275,9 @@ class _DesktopPairingScreenState extends State<DesktopPairingScreen> {
         const SizedBox(height: 8),
         Text('QR refreshes in ${_fmt(_secondsLeft)}',
             style: TextStyle(color: pal.textLo, fontSize: 12)),
+        const SizedBox(height: 4),
+        Text('Port ${_host.port} · auto-scans for an open port · press F12 to set',
+            style: TextStyle(color: pal.textLo, fontSize: 11)),
       ],
     );
   }
