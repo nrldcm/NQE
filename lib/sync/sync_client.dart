@@ -48,10 +48,14 @@ class SyncClient extends ChangeNotifier {
   String? lastUri;
   String? statusMessage;
 
-  // Parsed connection target from the last paired/loaded URI.
-  String? _host;
+  // Parsed connection target from the last paired/loaded URI. [_hosts] holds
+  // every candidate address in priority order (LAN first, mesh-VPN fallback).
+  List<String> _hosts = [];
   int? _port;
   String? _key;
+
+  /// The address the live connection is using (for status display).
+  String? activeHost;
 
   WebSocketChannel? _channel;
   StreamSubscription? _sub;
@@ -62,44 +66,53 @@ class SyncClient extends ChangeNotifier {
 
   // --- public API ----------------------------------------------------------
 
-  /// Parse a `nqe://sync?host=&port=&key=` URI, persist it, then connect.
+  /// Parse a `nqe://sync?host=&hosts=&port=&key=` URI, persist it, then connect.
   Future<void> pair(String uri) async {
     final parsed = _parse(uri);
     if (parsed == null) {
       _set(SyncConn.disconnected, 'Invalid pairing link.');
       return;
     }
-    _host = parsed.$1;
+    _hosts = parsed.$1;
     _port = parsed.$2;
     _key = parsed.$3;
     lastUri = uri.trim();
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_prefsUriKey, lastUri!);
-    } catch (_) {
-      // Persistence is best-effort; connecting still works this session.
-    }
+    await _persistUri();
     await connect();
   }
 
-  /// Set the sync target directly from a completed pairing (host/port/key),
-  /// persist it, then connect. Used after the secure QR handshake succeeds.
+  /// Set the sync target directly from a completed pairing. [hosts] are the
+  /// phone's candidate addresses in priority order (LAN first, mesh-VPN
+  /// fallback). Persists them, then connects. Used after the QR handshake.
+  Future<void> setTargets({
+    required List<String> hosts,
+    required int port,
+    required String key,
+  }) async {
+    _hosts = hosts.where((h) => h.trim().isNotEmpty).toList();
+    _port = port;
+    _key = key;
+    lastUri = 'nqe://sync?host=${_hosts.isNotEmpty ? _hosts.first : ''}'
+        '&hosts=${_hosts.join(',')}&port=$port&key=$key';
+    await _persistUri();
+    await connect();
+  }
+
+  /// Back-compat single-host convenience.
   Future<void> setTarget({
     required String host,
     required int port,
     required String key,
-  }) async {
-    _host = host;
-    _port = port;
-    _key = key;
-    lastUri = 'nqe://sync?host=$host&port=$port&key=$key';
+  }) =>
+      setTargets(hosts: [host], port: port, key: key);
+
+  Future<void> _persistUri() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_prefsUriKey, lastUri!);
+      if (lastUri != null) await prefs.setString(_prefsUriKey, lastUri!);
     } catch (_) {
       // Persistence is best-effort; connecting still works this session.
     }
-    await connect();
   }
 
   /// True once a pairing target has been saved (used to gate desktop first-run).
@@ -111,9 +124,10 @@ class SyncClient extends ChangeNotifier {
   /// Forget the saved pairing so the desktop returns to first-run pairing.
   Future<void> unpair() async {
     disconnect();
-    _host = null;
+    _hosts = [];
     _port = null;
     _key = null;
+    activeHost = null;
     lastUri = null;
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -131,7 +145,7 @@ class SyncClient extends ChangeNotifier {
       if (saved == null || saved.isEmpty) return false;
       final parsed = _parse(saved);
       if (parsed == null) return false;
-      _host = parsed.$1;
+      _hosts = parsed.$1;
       _port = parsed.$2;
       _key = parsed.$3;
       lastUri = saved;
@@ -174,43 +188,55 @@ class SyncClient extends ChangeNotifier {
     if (_key == null) {
       await loadSaved();
     }
-    if (_host == null || _port == null || _key == null) {
-      _set(SyncConn.disconnected, 'No pairing link — paste one to connect.');
+    if (_hosts.isEmpty || _port == null || _key == null) {
+      _set(SyncConn.disconnected, 'No pairing link — pair from your phone.');
       return;
     }
 
     _teardownSocket();
-    _set(SyncConn.connecting,
-        'Connecting to $_host:$_port… (attempt ${attempt + 1})');
 
-    try {
-      final uri = Uri.parse('ws://$_host:$_port/sync');
-      final channel = WebSocketChannel.connect(uri);
-      _channel = channel;
-      _authed = false;
+    // Hybrid connect: try each candidate address in priority order — LAN Wi-Fi
+    // first, then the mesh-VPN (Tailscale) fallback — and use the first that
+    // answers. This lets sync survive the phone leaving Wi-Fi.
+    for (var i = 0; i < _hosts.length; i++) {
+      final host = _hosts[i];
+      final label = _hosts.length > 1 ? ' [${i + 1}/${_hosts.length}]' : '';
+      _set(SyncConn.connecting,
+          'Connecting to $host:$_port…$label (attempt ${attempt + 1})');
+      try {
+        final channel =
+            WebSocketChannel.connect(Uri.parse('ws://$host:$_port/sync'));
+        _channel = channel;
+        _authed = false;
 
-      // Wait for the handshake so a dead host fails fast into reconnect.
-      await channel.ready.timeout(const Duration(seconds: 8));
+        // Short per-candidate timeout so a dead address fails fast to the next.
+        await channel.ready.timeout(const Duration(seconds: 5));
 
-      _sub = channel.stream.listen(
-        _onFrame,
-        onError: (Object e) => _onDrop('Connection error: $e'),
-        onDone: () => _onDrop('Connection closed by peer.'),
-        cancelOnError: true,
-      );
+        _sub = channel.stream.listen(
+          _onFrame,
+          onError: (Object e) => _onDrop('Connection error: $e'),
+          onDone: () => _onDrop('Connection closed by peer.'),
+          cancelOnError: true,
+        );
 
-      // First frame authenticates: the pairing key, verbatim.
-      channel.sink.add(_key);
-      _authed = true;
-      attempt = 0;
-      _set(SyncConn.connected, 'Connected to $_host:$_port.');
+        // First frame authenticates: the pairing key, verbatim.
+        channel.sink.add(_key);
+        _authed = true;
+        attempt = 0;
+        activeHost = host;
+        _set(SyncConn.connected, 'Connected to $host:$_port.');
 
-      // Push our snapshot immediately, then keep pushing periodically.
-      await _pushSnapshot();
-      _startPushTimer();
-    } catch (e) {
-      _onDrop('Could not connect: $e');
+        await _pushSnapshot();
+        _startPushTimer();
+        return; // connected — stop trying candidates
+      } catch (_) {
+        // This candidate failed; clean up and try the next one.
+        _teardownSocket();
+      }
     }
+
+    // No candidate answered — back off and retry the whole list later.
+    _onDrop('Could not reach the phone on any address.');
   }
 
   void _onFrame(dynamic message) async {
@@ -304,15 +330,23 @@ class SyncClient extends ChangeNotifier {
 
   // --- parsing -------------------------------------------------------------
 
-  /// Parse `nqe://sync?host=&port=&key=` into (host, port, key), or null.
-  (String, int, String)? _parse(String raw) {
+  /// Parse `nqe://sync?host=&hosts=&port=&key=` into (hosts, port, key), or
+  /// null. `hosts` is a comma-separated priority list; `host` is the legacy
+  /// single-address form and is folded in for backward compatibility.
+  (List<String>, int, String)? _parse(String raw) {
     try {
       final uri = Uri.parse(raw.trim());
       final host = uri.queryParameters['host'] ?? '';
+      final hostsParam = uri.queryParameters['hosts'] ?? '';
       final key = uri.queryParameters['key'] ?? '';
       final port = int.tryParse(uri.queryParameters['port'] ?? '');
-      if (host.isEmpty || key.isEmpty || port == null) return null;
-      return (host, port, key);
+      final hosts = <String>[];
+      for (final h in [host, ...hostsParam.split(',')]) {
+        final t = h.trim();
+        if (t.isNotEmpty && !hosts.contains(t)) hosts.add(t);
+      }
+      if (hosts.isEmpty || key.isEmpty || port == null) return null;
+      return (hosts, port, key);
     } catch (_) {
       return null;
     }

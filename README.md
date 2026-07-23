@@ -51,6 +51,7 @@ The Windows build is the **same app in client mode** — full parity with the ph
 - **Single-file `.exe`** — distributed as one self-contained executable (packaged with warp-packer), alongside a portable zip.
 - **Single instance** — launching again just focuses the existing window.
 - **Phone is the source of truth** — the desktop keeps its local SQLite copy in sync with the phone over the LAN. Edits on either device converge automatically (idempotent, tombstone-aware merge — no duplicates, deletes propagate, restorable).
+- **Hybrid connectivity** — the phone advertises every address it can be reached on (LAN Wi-Fi first, then a mesh-VPN address). The desktop tries the LAN, then falls back automatically, so sync keeps working even when the phone leaves Wi-Fi. To enable the internet fallback, install [Tailscale](https://tailscale.com) (free Personal plan) on both devices — no server to run, fully encrypted; the app uses the Tailscale address automatically once both devices are on your tailnet.
 - **Same PIN** — after pairing, the desktop unlocks with the **same PIN you set on your phone**.
 - **Connection watcher** — a live glyph shows Connected / Connecting / Reconnecting / Disconnected, with automatic backoff-retry and a manual reconnect.
 

@@ -126,6 +126,31 @@ void main() {
     expect(a == b, isFalse);
   });
 
+  test('hybrid multi-host payload survives the sealed round-trip', () async {
+    final (desktop, phone) = await pair();
+    const payload = PairingPayload(
+      syncHost: '192.168.1.50',
+      hosts: ['192.168.1.50', '100.101.102.103'], // LAN + Tailscale
+      syncPort: 8787,
+      syncKey: 'k',
+    );
+    final phoneKey = await Pairing.deriveSharedKey(
+      myKeyPair: phone.keyPair,
+      peerPublicKey: desktop.publicKey,
+      sid: sid,
+    );
+    final blob = await Pairing.sealPayload(sharedKey: phoneKey, payload: payload);
+    final desktopKey = await Pairing.deriveSharedKey(
+      myKeyPair: desktop.keyPair,
+      peerPublicKey: phone.publicKey,
+      sid: sid,
+    );
+    final opened =
+        await Pairing.openPayload(sharedKey: desktopKey, blobB64: blob);
+    expect(opened.allHosts, ['192.168.1.50', '100.101.102.103']);
+    expect(opened.allHosts.first, '192.168.1.50', reason: 'LAN stays primary');
+  });
+
   test('public key survives a base64 round-trip through the QR', () async {
     final keys = await Pairing.generateKeys();
     final restored = Pairing.publicKeyFromB64(keys.publicKeyB64);

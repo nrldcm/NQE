@@ -109,8 +109,8 @@ class _DesktopPairingScreenState extends State<DesktopPairingScreen> {
           len: payload.pinLen,
         );
       }
-      await SyncClient.instance.setTarget(
-        host: payload.syncHost,
+      await SyncClient.instance.setTargets(
+        hosts: payload.allHosts,
         port: payload.syncPort,
         key: payload.syncKey,
       );

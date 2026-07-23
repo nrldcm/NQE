@@ -88,11 +88,13 @@ class SyncServer extends ChangeNotifier {
   /// it ever leaves the device.
   Future<PairingPayload?> buildPairingPayload() async {
     if (!isRunning) await start();
-    final h = host;
-    if (h == null || h.isEmpty || _pairingKey.isEmpty) return null;
+    if (_pairingKey.isEmpty) return null;
+    final hosts = await _allSyncIps();
+    if (hosts.isEmpty) return null;
     final pin = await AuthService.instance.exportPinCredential();
     return PairingPayload(
-      syncHost: h,
+      syncHost: hosts.first,
+      hosts: hosts,
       syncPort: port,
       syncKey: _pairingKey,
       pinHash: pin?['hash'] as String?,
@@ -100,6 +102,59 @@ class SyncServer extends ChangeNotifier {
       pinLen: (pin?['len'] as int?) ?? 0,
       pinIterations: (pin?['iter'] as int?) ?? 0,
     );
+  }
+
+  /// All addresses the desktop may reach this phone on, in priority order:
+  /// LAN Wi-Fi first, then any mesh-VPN (Tailscale 100.64/10) address so sync
+  /// keeps working when the phone leaves Wi-Fi, then any other private IPv4.
+  /// The server binds 0.0.0.0, so it already listens on every one of these.
+  Future<List<String>> _allSyncIps() async {
+    final lan = <String>[];
+    final mesh = <String>[];
+    final other = <String>[];
+    final wifi = host; // resolved on start() via network_info_plus
+    if (wifi != null && wifi.isNotEmpty) lan.add(wifi);
+    try {
+      final ifaces = await NetworkInterface.list(
+        type: InternetAddressType.IPv4,
+        includeLoopback: false,
+        includeLinkLocal: false,
+      );
+      for (final ni in ifaces) {
+        for (final a in ni.addresses) {
+          final ip = a.address;
+          if (ip.startsWith('127.') || ip.startsWith('169.254.')) continue;
+          if (_isMeshVpn(ip)) {
+            if (!mesh.contains(ip)) mesh.add(ip);
+          } else if (_isPrivate(ip)) {
+            if (ip != wifi && !other.contains(ip)) other.add(ip);
+          }
+        }
+      }
+    } catch (_) {
+      // Fall back to whatever the Wi-Fi IP gave us.
+    }
+    // LAN preferred, mesh VPN as the internet fallback, then anything else.
+    return [...lan, ...mesh, ...other];
+  }
+
+  /// Tailscale / CGNAT mesh range: 100.64.0.0/10 (second octet 64–127).
+  bool _isMeshVpn(String ip) {
+    if (!ip.startsWith('100.')) return false;
+    final parts = ip.split('.');
+    if (parts.length < 2) return false;
+    final b = int.tryParse(parts[1]) ?? -1;
+    return b >= 64 && b <= 127;
+  }
+
+  bool _isPrivate(String ip) {
+    if (ip.startsWith('192.168.') || ip.startsWith('10.')) return true;
+    if (ip.startsWith('172.')) {
+      final parts = ip.split('.');
+      final b = parts.length > 1 ? int.tryParse(parts[1]) ?? 0 : 0;
+      return b >= 16 && b <= 31;
+    }
+    return false;
   }
 
   /// Start the LAN WebSocket server. Idempotent: a no-op while already running.

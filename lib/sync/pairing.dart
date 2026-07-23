@@ -35,7 +35,14 @@ import 'package:cryptography/cryptography.dart';
 /// The decrypted pairing payload the phone hands to the desktop: everything the
 /// desktop needs to reach the sync server and adopt the phone's PIN.
 class PairingPayload {
+  /// Primary sync address (the LAN Wi-Fi IP).
   final String syncHost;
+
+  /// All candidate addresses the desktop may reach the phone on, in priority
+  /// order — LAN first, then any mesh-VPN (e.g. Tailscale 100.64/10) address so
+  /// sync survives the phone leaving Wi-Fi. Includes [syncHost].
+  final List<String> hosts;
+
   final int syncPort;
   final String syncKey;
 
@@ -48,6 +55,7 @@ class PairingPayload {
 
   const PairingPayload({
     required this.syncHost,
+    this.hosts = const [],
     required this.syncPort,
     required this.syncKey,
     this.pinHash,
@@ -56,11 +64,17 @@ class PairingPayload {
     this.pinIterations = 0,
   });
 
+  /// Candidate addresses (never empty): the explicit [hosts] list, else just
+  /// [syncHost].
+  List<String> get allHosts =>
+      hosts.isNotEmpty ? hosts : [if (syncHost.isNotEmpty) syncHost];
+
   bool get hasPin =>
       (pinHash ?? '').isNotEmpty && (pinSalt ?? '').isNotEmpty && pinLen > 0;
 
   Map<String, dynamic> toJson() => {
         'host': syncHost,
+        'hosts': allHosts,
         'port': syncPort,
         'key': syncKey,
         if (hasPin) 'pinHash': pinHash,
@@ -69,21 +83,29 @@ class PairingPayload {
         if (hasPin) 'pinIter': pinIterations,
       };
 
-  factory PairingPayload.fromJson(Map<String, dynamic> j) => PairingPayload(
-        syncHost: (j['host'] ?? '').toString(),
-        syncPort: (j['port'] is int)
-            ? j['port'] as int
-            : int.tryParse('${j['port']}') ?? 0,
-        syncKey: (j['key'] ?? '').toString(),
-        pinHash: j['pinHash']?.toString(),
-        pinSalt: j['pinSalt']?.toString(),
-        pinLen: (j['pinLen'] is int)
-            ? j['pinLen'] as int
-            : int.tryParse('${j['pinLen']}') ?? 0,
-        pinIterations: (j['pinIter'] is int)
-            ? j['pinIter'] as int
-            : int.tryParse('${j['pinIter']}') ?? 0,
-      );
+  factory PairingPayload.fromJson(Map<String, dynamic> j) {
+    final rawHosts = (j['hosts'] is List)
+        ? (j['hosts'] as List).map((e) => e.toString()).toList()
+        : <String>[];
+    final host = (j['host'] ?? (rawHosts.isNotEmpty ? rawHosts.first : ''))
+        .toString();
+    return PairingPayload(
+      syncHost: host,
+      hosts: rawHosts,
+      syncPort: (j['port'] is int)
+          ? j['port'] as int
+          : int.tryParse('${j['port']}') ?? 0,
+      syncKey: (j['key'] ?? '').toString(),
+      pinHash: j['pinHash']?.toString(),
+      pinSalt: j['pinSalt']?.toString(),
+      pinLen: (j['pinLen'] is int)
+          ? j['pinLen'] as int
+          : int.tryParse('${j['pinLen']}') ?? 0,
+      pinIterations: (j['pinIter'] is int)
+          ? j['pinIter'] as int
+          : int.tryParse('${j['pinIter']}') ?? 0,
+    );
+  }
 }
 
 /// An ephemeral X25519 identity for one pairing session.
