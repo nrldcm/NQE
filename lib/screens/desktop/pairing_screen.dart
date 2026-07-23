@@ -1,25 +1,19 @@
-// Desktop first-run pairing: show a QR the phone scans, then confirm with the
-// 6-digit code the phone displays. On success the desktop adopts the phone's
-// sync endpoint + PIN and moves on to the shell.
-//
-// UX: the LAN address is never shown (the QR carries it). The code entry only
-// appears AFTER the phone has scanned. The QR auto-refreshes on a timeout, and
-// the user can go "Back to QR" to let the phone re-scan a fresh code.
-import 'dart:async';
-
+// Desktop first-run pairing (outbound). The desktop finds the phone on the LAN
+// (auto-scan or a typed IP), connects OUT to it — so a firewalled laptop that
+// can't accept inbound still works — then confirms with the 6-digit code the
+// phone shows. On success it adopts the phone's sync endpoint + PIN.
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../services/auth_service.dart';
 import '../../state/app_state.dart';
-import '../../sync/pairing_host.dart';
+import '../../sync/net_util.dart';
+import '../../sync/pairing_desktop.dart';
 import '../../sync/sync_client.dart';
 import '../../theme.dart';
 import '../../widgets/nqe_logo.dart';
 
 class DesktopPairingScreen extends StatefulWidget {
-  /// Called once pairing completes and the target + PIN have been stored.
   final VoidCallback onPaired;
   const DesktopPairingScreen({super.key, required this.onPaired});
 
@@ -28,78 +22,66 @@ class DesktopPairingScreen extends StatefulWidget {
 }
 
 class _DesktopPairingScreenState extends State<DesktopPairingScreen> {
-  final _host = PairingHost();
+  final _pairing = DesktopPairing();
+  final _ipCtrl = TextEditingController();
+  final _portCtrl = TextEditingController(text: '8787');
   final _codeCtrl = TextEditingController();
-  bool _finishing = false;
-
-  // A pairing session lives for this long before the QR auto-refreshes (a fresh
-  // key pair + session id). The window resets when the phone scans, giving full
-  // time to type the code.
-  static const int _windowSeconds = 180;
-  Timer? _ticker;
-  int _secondsLeft = _windowSeconds;
-  bool _sawOffer = false;
+  bool _busy = false;
 
   @override
   void initState() {
     super.initState();
-    _host.addListener(_onHost);
-    _host.start();
-    _startCountdown();
+    _pairing.addListener(_onChange);
+    // Kick off an auto-scan so the user usually doesn't type anything.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scan());
   }
 
-  void _onHost() {
-    if (!mounted) return;
-    // When the phone first scans, reset the window so the user has the full
-    // time to read + type the code.
-    if (_host.hasOffer && !_sawOffer) {
-      _sawOffer = true;
-      _secondsLeft = _windowSeconds;
-    }
-    setState(() {});
-  }
-
-  void _startCountdown() {
-    _ticker?.cancel();
-    _secondsLeft = _windowSeconds;
-    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!mounted) return;
-      setState(() => _secondsLeft--);
-      if (_secondsLeft <= 0) _restart();
-    });
-  }
-
-  // Regenerate a fresh QR (new keys + session id) and return to the waiting
-  // state so the phone can scan again. Used by "Back to QR" and on timeout.
-  Future<void> _restart() async {
-    _sawOffer = false;
-    _codeCtrl.clear();
-    _finishing = false;
-    await _host.start();
-    _startCountdown();
+  void _onChange() {
     if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
-    _ticker?.cancel();
-    _host.removeListener(_onHost);
-    _host.dispose();
+    _pairing.removeListener(_onChange);
+    _pairing.dispose();
+    _ipCtrl.dispose();
+    _portCtrl.dispose();
     _codeCtrl.dispose();
     super.dispose();
   }
 
-  Future<void> _submit() async {
-    final code = _codeCtrl.text.trim();
-    if (code.length != 6) {
-      _snack('Enter the 6-digit code from your phone.');
+  int get _port => sanitizePort(int.tryParse(_portCtrl.text.trim()) ?? 8787);
+
+  Future<void> _scan() async {
+    final hits = await _pairing.discover(_port);
+    if (!mounted) return;
+    if (hits.length == 1) {
+      _ipCtrl.text = hits.first;
+      _connect(hits.first);
+    } else if (hits.isNotEmpty) {
+      _ipCtrl.text = hits.first;
+    }
+  }
+
+  Future<void> _connect(String host) async {
+    if (host.trim().isEmpty) {
+      _snack('Enter your phone’s IP (see NQE ▸ Settings ▸ Device Sync).');
       return;
     }
-    setState(() => _finishing = true);
+    await _pairing.connect(host.trim(), _port);
+  }
+
+  Future<void> _verify() async {
+    final code = _codeCtrl.text.trim();
+    if (code.length != 6) {
+      _snack('Enter the 6-digit code shown on your phone.');
+      return;
+    }
+    setState(() => _busy = true);
     try {
-      final payload = await _host.verifyCodeAndFinish(code);
+      final payload = await _pairing.submitCode(code);
       if (payload == null) {
-        _snack(_host.statusMessage ?? 'Incorrect code.');
+        _snack(_pairing.message ?? 'Incorrect code.');
         return;
       }
       if (payload.hasPin) {
@@ -118,10 +100,9 @@ class _DesktopPairingScreenState extends State<DesktopPairingScreen> {
         await appState.load();
       } catch (_) {/* non-fatal */}
       if (!mounted) return;
-      _ticker?.cancel();
       widget.onPaired();
     } finally {
-      if (mounted) setState(() => _finishing = false);
+      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -130,71 +111,16 @@ class _DesktopPairingScreenState extends State<DesktopPairingScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
   }
 
-  Future<void> _showPortDialog() async {
-    final pal = context.nqe;
-    final ctrl = TextEditingController(text: _host.preferredPort.toString());
-    final res = await showDialog<int>(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: pal.surface,
-        title: Text('Pairing port', style: TextStyle(color: pal.textHi)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              'Use a port that is open on your network. The app already '
-              'auto-scans for an open port — set one here only if you need a '
-              'specific one.',
-              style: TextStyle(color: pal.textLo, fontSize: 12),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: ctrl,
-              autofocus: true,
-              keyboardType: TextInputType.number,
-              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              decoration:
-                  const InputDecoration(labelText: 'Port (1024–65535)'),
-              onSubmitted: (_) =>
-                  Navigator.pop(context, int.tryParse(ctrl.text.trim())),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel')),
-          FilledButton(
-              onPressed: () =>
-                  Navigator.pop(context, int.tryParse(ctrl.text.trim())),
-              child: const Text('Apply')),
-        ],
-      ),
-    );
-    if (res == null) return;
-    await _host.setPort(res);
-    _startCountdown();
-    if (mounted) setState(() {});
-  }
-
   @override
   Widget build(BuildContext context) {
     final pal = context.nqe;
-    final uri = _host.pairingUri;
-    final got = _host.hasOffer;
-    final isError = _host.state == PairingHostState.error;
+    final st = _pairing.state;
+    final awaiting = st == DesktopPairState.awaitingCode ||
+        st == DesktopPairState.verifying;
 
-    return CallbackShortcuts(
-      bindings: {
-        const SingleActivator(LogicalKeyboardKey.f12): () {
-          _showPortDialog();
-        },
-      },
-      child: Focus(
-        autofocus: true,
-        child: Scaffold(
-          backgroundColor: pal.bg,
-          body: Center(
+    return Scaffold(
+      backgroundColor: pal.bg,
+      body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(32),
           child: ConstrainedBox(
@@ -211,168 +137,177 @@ class _DesktopPairingScreenState extends State<DesktopPairingScreen> {
                         fontWeight: FontWeight.w800)),
                 const SizedBox(height: 8),
                 Text(
-                  'On your phone open  NQE ▸ Settings ▸ Device Sync ▸ Pair Desktop '
-                  'Device  and scan this QR. Your phone stays the source of truth.',
+                  'On your phone open  NQE ▸ Settings ▸ Device Sync,  turn on '
+                  'LAN Sync Server, then tap Pair Desktop Device. This desktop '
+                  'finds your phone and connects to it.',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: pal.textLo, height: 1.5),
                 ),
-                const SizedBox(height: 28),
-                if (isError)
-                  _errorBox(pal)
-                else if (!got)
-                  _waitingView(pal, uri)
-                else
-                  _codeView(pal),
+                const SizedBox(height: 24),
+                if (awaiting) _codeCard(pal) else _findCard(pal),
+                if (_pairing.message != null) ...[
+                  const SizedBox(height: 14),
+                  Text(_pairing.message!,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                          color: st == DesktopPairState.error
+                              ? NqeColors.loss
+                              : pal.textLo,
+                          fontSize: 12)),
+                ],
               ],
             ),
-          ),
-        ),
           ),
         ),
       ),
     );
   }
 
-  // ---- waiting: QR + spinner (no address shown) ----
-  Widget _waitingView(NqePalette pal, String? uri) {
-    return Column(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: uri == null
-              ? const SizedBox(
-                  width: 240,
-                  height: 240,
-                  child: Center(child: CircularProgressIndicator()),
-                )
-              : QrImageView(
-                  data: uri,
-                  size: 240,
-                  backgroundColor: Colors.white,
-                  version: QrVersions.auto,
-                ),
-        ),
-        const SizedBox(height: 22),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation<Color>(pal.textLo)),
-            ),
-            const SizedBox(width: 10),
-            Text('Waiting for your phone to scan…',
-                style: TextStyle(color: pal.textLo)),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Text('QR refreshes in ${_fmt(_secondsLeft)}',
-            style: TextStyle(color: pal.textLo, fontSize: 12)),
-        const SizedBox(height: 4),
-        Text('Port ${_host.port} · auto-scans for an open port · press F12 to set',
-            style: TextStyle(color: pal.textLo, fontSize: 11)),
-      ],
-    );
-  }
-
-  // ---- after scan: the 6-digit code entry appears ----
-  Widget _codeView(NqePalette pal) {
-    return Column(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            color: pal.surface,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: pal.textHi),
-          ),
-          child: Column(
+  Widget _findCard(NqePalette pal) {
+    final scanning = _pairing.state == DesktopPairState.scanning ||
+        _pairing.state == DesktopPairState.connecting;
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: pal.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: pal.line),
+      ),
+      child: Column(
+        children: [
+          Row(
             children: [
-              Text('Enter the 6-digit code shown on your phone',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: pal.textLo, fontSize: 13)),
-              const SizedBox(height: 14),
-              TextField(
-                controller: _codeCtrl,
-                enabled: !_finishing,
-                autofocus: true,
-                keyboardType: TextInputType.number,
-                textAlign: TextAlign.center,
-                maxLength: 6,
-                style: TextStyle(
-                  color: pal.textHi,
-                  fontSize: 30,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 12,
+              Expanded(
+                flex: 3,
+                child: TextField(
+                  controller: _ipCtrl,
+                  enabled: !scanning,
+                  keyboardType: TextInputType.text,
+                  decoration: const InputDecoration(
+                    labelText: 'Phone IP',
+                    hintText: 'e.g. 192.168.1.71',
+                  ),
+                  onSubmitted: (v) => _connect(v),
                 ),
-                inputFormatters: [
-                  FilteringTextInputFormatter.digitsOnly,
-                  LengthLimitingTextInputFormatter(6),
-                ],
-                decoration: const InputDecoration(
-                  counterText: '',
-                  hintText: '••••••',
-                ),
-                onSubmitted: (_) => _submit(),
               ),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  onPressed: _finishing ? null : _submit,
-                  child: _finishing
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Text('Pair'),
+              const SizedBox(width: 10),
+              Expanded(
+                flex: 1,
+                child: TextField(
+                  controller: _portCtrl,
+                  enabled: !scanning,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  decoration: const InputDecoration(labelText: 'Port'),
                 ),
               ),
             ],
           ),
-        ),
-        const SizedBox(height: 14),
-        TextButton.icon(
-          onPressed: _finishing ? null : _restart,
-          icon: const Icon(Icons.arrow_back, size: 18),
-          label: const Text('Back to QR (scan again)'),
-        ),
-        Text('Code expires in ${_fmt(_secondsLeft)}',
-            style: TextStyle(color: pal.textLo, fontSize: 12)),
-      ],
+          const SizedBox(height: 8),
+          if (_pairing.found.length > 1) ...[
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text('Found devices — tap to connect:',
+                  style: TextStyle(color: pal.textLo, fontSize: 12)),
+            ),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: _pairing.found
+                  .map((ip) => ActionChip(
+                        label: Text(ip),
+                        onPressed: scanning ? null : () => _connect(ip),
+                      ))
+                  .toList(),
+            ),
+            const SizedBox(height: 12),
+          ],
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: scanning ? null : _scan,
+                  icon: scanning
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.wifi_find),
+                  label: Text(scanning ? 'Searching…' : 'Search again'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: scanning ? null : () => _connect(_ipCtrl.text),
+                  icon: const Icon(Icons.link),
+                  label: const Text('Connect'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
-  Widget _errorBox(NqePalette pal) {
-    return Column(
-      children: [
-        const Icon(Icons.error_outline, size: 44, color: NqeColors.loss),
-        const SizedBox(height: 14),
-        Text(_host.statusMessage ?? 'Pairing error',
+  Widget _codeCard(NqePalette pal) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: pal.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: pal.textHi),
+      ),
+      child: Column(
+        children: [
+          Text('Enter the 6-digit code shown on your phone',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: pal.textLo, fontSize: 13)),
+          const SizedBox(height: 14),
+          TextField(
+            controller: _codeCtrl,
+            enabled: !_busy,
+            autofocus: true,
+            keyboardType: TextInputType.number,
             textAlign: TextAlign.center,
-            style: TextStyle(color: pal.textLo, height: 1.5)),
-        const SizedBox(height: 20),
-        FilledButton.icon(
-          onPressed: _restart,
-          icon: const Icon(Icons.refresh),
-          label: const Text('Try again'),
-        ),
-      ],
+            maxLength: 6,
+            style: TextStyle(
+              color: pal.textHi,
+              fontSize: 30,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 12,
+            ),
+            inputFormatters: [
+              FilteringTextInputFormatter.digitsOnly,
+              LengthLimitingTextInputFormatter(6),
+            ],
+            decoration:
+                const InputDecoration(counterText: '', hintText: '••••••'),
+            onSubmitted: (_) => _verify(),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton(
+              onPressed: _busy ? null : _verify,
+              child: _busy
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Text('Pair'),
+            ),
+          ),
+          const SizedBox(height: 6),
+          TextButton.icon(
+            onPressed: _busy ? null : () => _scan(),
+            icon: const Icon(Icons.arrow_back, size: 18),
+            label: const Text('Back / find another device'),
+          ),
+        ],
+      ),
     );
-  }
-
-  static String _fmt(int s) {
-    if (s < 0) s = 0;
-    final m = s ~/ 60;
-    final r = s % 60;
-    if (m > 0) return '${m}m ${r.toString().padLeft(2, '0')}s';
-    return '${r}s';
   }
 }

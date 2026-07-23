@@ -21,6 +21,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:cryptography/cryptography.dart' show SecretKey;
 import 'package:flutter/foundation.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -220,6 +221,110 @@ class SyncServer extends ChangeNotifier {
     await stopForeground();
   }
 
+  // --- pairing (phone is the server; the desktop connects OUT to us) --------
+  //
+  // On a locked-down laptop the desktop can't accept inbound connections
+  // (firewall needs admin), so pairing is desktop-initiated: the desktop
+  // connects to ws://<thisPhone>:<port>/pair. We run the SAS-authenticated
+  // X25519 handshake here and, once the human confirms the 6-digit code, hand
+  // over the sealed sync/PIN payload.
+  bool pairingMode = false;
+  bool pairingConnected = false; // a desktop is mid-handshake
+  String? pairingCode; // the 6-digit SAS to show on the phone
+  PairingKeys? _pairKeys;
+  String? _pairSid;
+
+  bool get isPairing => pairingMode;
+
+  /// Enter pairing mode (starts the server if needed) and mint a fresh session.
+  Future<void> startPairing() async {
+    if (!isRunning) await start();
+    _pairKeys = await Pairing.generateKeys();
+    final pk = _pairKeys!.publicKeyB64;
+    _pairSid = pk.length >= 16 ? pk.substring(0, 16) : pk;
+    pairingMode = true;
+    pairingConnected = false;
+    pairingCode = null;
+    notifyListeners();
+  }
+
+  /// Leave pairing mode and forget the ephemeral pairing session.
+  void stopPairing() {
+    pairingMode = false;
+    pairingConnected = false;
+    pairingCode = null;
+    _pairKeys = null;
+    _pairSid = null;
+    notifyListeners();
+  }
+
+  void _handlePairing(WebSocketChannel channel) {
+    StreamSubscription? sub;
+    SecretKey? shared;
+    sub = channel.stream.listen(
+      (dynamic message) async {
+        try {
+          final frame = message is String ? message : message.toString();
+          final map = jsonDecode(frame) as Map<String, dynamic>;
+
+          // Step 1: desktop says hello with its ephemeral public key.
+          if (map['hello'] != null) {
+            if (!pairingMode || _pairKeys == null || _pairSid == null) {
+              channel.sink.add(jsonEncode({'error': 'not_pairing'}));
+              return;
+            }
+            final desktopPub =
+                Pairing.publicKeyFromB64(map['hello'].toString());
+            shared = await Pairing.deriveSharedKey(
+              myKeyPair: _pairKeys!.keyPair,
+              peerPublicKey: desktopPub,
+              sid: _pairSid!,
+            );
+            pairingCode = await Pairing.shortCode(
+              sid: _pairSid!,
+              desktopPub: desktopPub,
+              phonePub: _pairKeys!.publicKey,
+            );
+            pairingConnected = true;
+            notifyListeners();
+            channel.sink.add(jsonEncode(
+                {'sid': _pairSid, 'phonePub': _pairKeys!.publicKeyB64}));
+            return;
+          }
+
+          // Step 2: the human matched the code on the desktop → send payload.
+          if (map['confirm'] == true && shared != null) {
+            final payload = await buildPairingPayload();
+            if (payload == null) {
+              channel.sink.add(jsonEncode({'error': 'no_payload'}));
+              return;
+            }
+            final blob =
+                await Pairing.sealPayload(sharedKey: shared!, payload: payload);
+            channel.sink.add(jsonEncode({'payload': blob}));
+            pairingConnected = false;
+            pairingCode = null;
+            notifyListeners();
+            return;
+          }
+        } catch (_) {
+          // Ignore malformed frames — a wrong client can't complete pairing.
+        }
+      },
+      onError: (Object _) {
+        pairingConnected = false;
+        notifyListeners();
+        sub?.cancel();
+      },
+      onDone: () {
+        pairingConnected = false;
+        notifyListeners();
+        sub?.cancel();
+      },
+      cancelOnError: true,
+    );
+  }
+
   /// Set the preferred sync port (persisted). Restarts the server if running so
   /// the new port takes effect and is re-advertised.
   Future<void> setPreferredPort(int p) async {
@@ -248,16 +353,26 @@ class SyncServer extends ChangeNotifier {
   // --- internals -----------------------------------------------------------
 
   Handler _buildHandler() {
-    final ws = webSocketHandler(
+    final syncWs = webSocketHandler(
       (WebSocketChannel channel, String? protocol) {
         _handleConnection(channel);
       },
     );
+    final pairWs = webSocketHandler(
+      (WebSocketChannel channel, String? protocol) {
+        _handlePairing(channel);
+      },
+    );
     return (Request request) {
-      if (request.url.path == 'sync') {
-        return ws(request);
+      final path = request.url.path;
+      if (path == 'sync') return syncWs(request);
+      if (path == 'pair') return pairWs(request);
+      // A tiny liveness probe used by the desktop's LAN scan to find this phone.
+      if (path == 'nqe') {
+        return Response.ok('NQE',
+            headers: {'content-type': 'text/plain'});
       }
-      return Response.notFound('NQE sync server');
+      return Response.notFound('NQE server');
     };
   }
 

@@ -41,7 +41,6 @@ dependencies:
   shelf_web_socket: ^2.0.0
   web_socket_channel: ^3.0.1
   network_info_plus: ^6.1.0
-  qr_flutter: ^4.1.0
   flutter_foreground_task: ^8.17.0
 
   # v2 desktop: SQLite via FFI (Windows/Linux/macOS desktop client).
@@ -49,9 +48,6 @@ dependencies:
   sqlite3_flutter_libs: ^0.5.24
   window_manager: ^0.4.3
   windows_single_instance: ^1.0.1
-
-  # v2 pairing: phone scans the desktop's QR to pair (camera).
-  mobile_scanner: ^5.2.3
 
   # v2 desktop parity: embedded web view for the Live tab (WebView2) with an
   # open-in-browser fallback via url_launcher.

@@ -37,3 +37,19 @@ int sanitizePort(int p, {int fallback = 8787}) {
   if (p < 1024 || p > 65535) return fallback;
   return p;
 }
+
+/// Heuristic: is this network-interface name a virtual/VPN/container adapter
+/// whose address a phone on the real Wi-Fi can't reach? Used to skip them when
+/// picking a LAN address / scanning subnets.
+bool isVirtualAdapter(String name) {
+  final n = name.toLowerCase();
+  const bad = [
+    'vethernet', 'vmware', 'virtualbox', 'vbox', 'hyper-v', 'hyperv',
+    'wsl', 'docker', 'loopback', 'tailscale', 'zerotier', 'tunnel',
+    'tap', 'tun', 'bluetooth', 'vpn', 'radmin', 'hamachi', 'npcap',
+  ];
+  for (final b in bad) {
+    if (n.contains(b)) return true;
+  }
+  return false;
+}

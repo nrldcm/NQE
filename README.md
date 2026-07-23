@@ -55,16 +55,15 @@ The Windows build is the **same app in client mode** — full parity with the ph
 - **Same PIN** — after pairing, the desktop unlocks with the **same PIN you set on your phone**.
 - **Connection watcher** — a live glyph shows Connected / Connecting / Reconnecting / Disconnected, with automatic backoff-retry and a manual reconnect.
 
-### Secure pairing (QR + 6-digit code)
+### Secure pairing (6-digit code)
 
-Pairing is designed to resist LAN eavesdroppers and man-in-the-middle attackers:
+Pairing is **desktop-initiated** — the desktop connects *out* to the phone — so it works even on a **locked-down laptop whose firewall blocks inbound** connections (approving inbound needs admin; outbound is always allowed). The phone runs the server (Android allows inbound); the desktop finds it and connects.
 
-1. On the **desktop**, first run shows a **QR code** (and a copyable link).
-2. On the **phone**: **Settings ▸ Device Sync**, turn on **LAN Sync Server**, then tap **Pair Desktop Device** — the camera opens and you **scan the desktop's QR**.
-3. Both devices perform an **X25519 (ECDH) key exchange**. The phone shows a **6-digit code** — a *Short Authentication String* computed from **both** public keys.
-4. You type that code into the desktop.
+1. On the **phone**: **Settings ▸ Device Sync**, turn on **LAN Sync Server**, then tap **Pair Desktop Device**. The phone shows its address and waits.
+2. On the **desktop** (first run): it **auto-scans your Wi-Fi** for the phone (or you type the phone's IP). It connects and both devices do an **X25519 (ECDH) key exchange**.
+3. The phone shows a **6-digit code** — a *Short Authentication String* over **both** public keys. You type it into the desktop.
 
-Why it's safe: the sync credentials and PIN are sealed with **AES-256-GCM under the full-entropy ECDH key** — the 6-digit code is an *integrity check of the key exchange*, never the encryption key. A passive sniffer can't decrypt anything, and an active attacker who swaps keys changes the 6-digit code, so the human comparison catches the tampering. Keys are ephemeral (forward secrecy) and bound to the pairing session.
+Why it's safe: the sync credentials and PIN are sealed with **AES-256-GCM under the full-entropy ECDH key** — the 6-digit code is an *integrity check of the key exchange*, never the encryption key. A passive sniffer can't decrypt anything, and an active attacker who swaps keys changes the 6-digit code, so the human comparison catches the tampering. Keys are ephemeral (forward secrecy) and bound to the pairing session. Both the phone (server) and desktop (pairing listener isn't used) **auto-scan for an open port**, so a busy/blocked port never breaks pairing.
 
 ## Screenshots
 
@@ -129,7 +128,7 @@ flutter build windows --release    # Windows desktop
 - **Auth / lock:** `local_auth` (+ `local_auth_android`), PBKDF2 PIN
 - **Charts:** `fl_chart`
 - **Live charts:** `webview_flutter` (mobile) / `webview_windows` (desktop)
-- **Device sync & pairing:** `shelf` + `shelf_web_socket`, `web_socket_channel`, `network_info_plus`, `qr_flutter`, `mobile_scanner` (camera), `flutter_foreground_task`; `cryptography` (X25519 / HKDF / AES-256-GCM)
+- **Device sync & pairing:** `shelf` + `shelf_web_socket`, `web_socket_channel`, `network_info_plus`, `flutter_foreground_task`; `cryptography` (X25519 / HKDF / AES-256-GCM). Desktop finds the phone by LAN scan (outbound), so no inbound/firewall admin needed.
 - **Crypto & backup:** `cryptography` (AES-256-GCM / PBKDF2), `share_plus`, `file_picker`
 - **Desktop shell:** `window_manager`, `windows_single_instance`, `url_launcher`
 - **CI/CD:** GitHub Actions
@@ -153,12 +152,12 @@ lib/
     app_state.dart          # app state management
   sync/
     pairing.dart            # SAS-authenticated X25519 pairing crypto
-    pairing_host.dart       # desktop: QR + pairing listener
-    pairing_client.dart     # phone: scan + sealed handoff
+    pairing_desktop.dart    # desktop: LAN scan + outbound pairing client
+    net_util.dart           # open-port scan + virtual-adapter filtering
     sync_engine.dart        # deterministic, idempotent merge
     sync_repo.dart          # snapshot build / apply
-    sync_server.dart        # phone LAN server (source of truth)
-    sync_client.dart        # desktop LAN client
+    sync_server.dart        # phone LAN server + pairing responder (source of truth)
+    sync_client.dart        # desktop LAN client (LAN + mesh fallback)
   widgets/
     charts.dart             # equity curve, P&L bars, donuts
     connection_watcher.dart # live sync-status glyph
