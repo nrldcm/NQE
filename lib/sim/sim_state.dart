@@ -119,13 +119,20 @@ class SimState extends ChangeNotifier {
     price.start();
   }
 
+  /// Stable id for the single default account. Fixed (not random) so a paired
+  /// phone and desktop converge onto the SAME account instead of each creating
+  /// its own and never merging.
+  static const String kDefaultAccountId = 'sandbox-default';
+
   Future<void> _load() async {
     loading = true;
     notifyListeners();
     var accounts = await _db.accounts();
-    if (accounts.isEmpty) {
+    // A mirror (paired desktop) must NOT create its own account — it waits for
+    // the phone's account to sync in, or the two would never converge.
+    if (accounts.isEmpty && !mirror) {
       final a = SimAccount(
-        id: uid(),
+        id: kDefaultAccountId,
         name: 'Sandbox',
         currency: 'PHP', // pesos — the Sandbox lists the PSE alongside FX/crypto
         startingCash: 1000000, // ₱1,000,000 virtual starting balance
@@ -134,6 +141,13 @@ class SimState extends ChangeNotifier {
       );
       await _db.upsertAccount(a);
       accounts = [a];
+    }
+    if (accounts.isEmpty) {
+      // Mirror with nothing synced yet — show empty until the phone's data
+      // arrives (onRemoteSimApplied will populate the portfolio).
+      loading = false;
+      notifyListeners();
+      return;
     }
     final acc = accounts.first;
     final pos = await _db.positions(acc.id);
