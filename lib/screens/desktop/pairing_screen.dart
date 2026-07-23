@@ -91,7 +91,7 @@ class _DesktopPairingScreenState extends State<DesktopPairingScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              'The port your phone’s LAN Sync Server uses (Settings ▸ Device '
+              'The port your phone’s Desktop Mode uses (Settings ▸ Device '
               'Sync ▸ Sync port). Default is 8787.',
               style: TextStyle(color: pal.textLo, fontSize: 12),
             ),
@@ -156,8 +156,8 @@ class _DesktopPairingScreenState extends State<DesktopPairingScreen> {
                             fontWeight: FontWeight.w800)),
                     const SizedBox(height: 8),
                     Text(
-                      'On your phone open  NQE ▸ Settings ▸ Device Sync,  turn on '
-                      'LAN Sync Server, then tap Pair Desktop Device. This desktop '
+                      'On your phone open  NQE ▸ Settings ▸ Desktop Mode,  turn on '
+                      'Desktop Mode, then tap Pair Desktop Device. This desktop '
                       'finds your phone automatically.',
                       textAlign: TextAlign.center,
                       style: TextStyle(color: pal.textLo, height: 1.5),

@@ -584,8 +584,12 @@ class SyncServer extends ChangeNotifier {
     final records = SyncEngine.decodePayload(json);
     await SyncRepo.instance.applyRemote(records);
     // Sandbox rows land in the sim DB only; then the phone (authority) reloads
-    // so a desktop-placed order enters the engine loop and executes here.
-    final simApplied = await SimSyncRepo.instance.applyRemote(records);
+    // so a desktop-placed order enters the engine loop and executes here. The
+    // phone is the authority (asFollower:false) — it only accepts new forwarded
+    // orders / order-cancels / account LWW from the desktop, never letting a
+    // stale mirror row overwrite engine-owned positions & fills.
+    final simApplied = await SimSyncRepo.instance
+        .applyRemote(records, asFollower: simState.mirror);
     if (simApplied > 0) {
       try {
         await simState.onRemoteSimApplied();

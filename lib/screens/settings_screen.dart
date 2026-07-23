@@ -177,7 +177,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await _loadSecurity();
   }
 
-  // ---- Device Sync ----
+  // ---- Desktop Mode ----
   Future<void> _toggleServer(bool on) async {
     setState(() => _syncBusy = true);
     try {
@@ -486,7 +486,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ]),
               const SizedBox(height: 20),
-              _sectionLabel('Device Sync', pal),
+              _sectionLabel('Desktop Mode', pal),
               _deviceSyncSection(pal),
               const SizedBox(height: 20),
               _sectionLabel('Backup', pal),
@@ -611,7 +611,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         return _card(pal, [
           SwitchListTile(
             secondary: Icon(Icons.wifi_tethering, color: pal.textHi),
-            title: Text('LAN Sync Server', style: TextStyle(color: pal.textHi)),
+            title: Text('Desktop Mode', style: TextStyle(color: pal.textHi)),
             subtitle: Text(
               running
                   ? 'Running · ${s.host ?? '—'}:${s.port} · ${s.connectedPeers} connected'

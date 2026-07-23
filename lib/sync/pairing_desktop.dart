@@ -90,7 +90,7 @@ class DesktopPairing extends ChangeNotifier {
         DesktopPairState.idle,
         hits.isEmpty
             ? 'No phone found. Check both are on the same Wi-Fi, then type the '
-                'phone’s IP (NQE ▸ Settings ▸ Device Sync shows it).'
+                'phone’s IP (NQE ▸ Settings ▸ Desktop Mode shows it).'
             : 'Found ${hits.length} device(s).',
       );
     }
@@ -137,12 +137,12 @@ class DesktopPairing extends ChangeNotifier {
           host, port, '/pair/hello', {'pub': _keys!.publicKeyB64});
       if (hello == null) {
         _set(DesktopPairState.error,
-            'Could not reach the phone at $host:$port. Same Wi-Fi? Is “LAN Sync Server” on?');
+            'Could not reach the phone at $host:$port. Same Wi-Fi? Is “Desktop Mode” on?');
         return null;
       }
       if (hello['error'] != null || hello['phonePub'] == null) {
         _set(DesktopPairState.error,
-            'Phone isn’t ready to pair. On the phone open NQE ▸ Settings ▸ Device Sync ▸ Pair Desktop Device, then try again.');
+            'Phone isn’t ready to pair. On the phone open NQE ▸ Settings ▸ Desktop Mode ▸ Pair Desktop Device, then try again.');
         return null;
       }
       _sid = hello['sid'].toString();

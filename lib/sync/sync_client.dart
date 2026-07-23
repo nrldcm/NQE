@@ -253,7 +253,9 @@ class SyncClient extends ChangeNotifier {
       final records = SyncEngine.decodePayload(json);
       await SyncRepo.instance.applyRemote(records);
       // Sandbox rows ride the same channel but land in the sim DB only.
-      final simApplied = await SimSyncRepo.instance.applyRemote(records);
+      // The desktop mirrors the phone authority — apply its sim rows verbatim.
+      final simApplied = await SimSyncRepo.instance
+          .applyRemote(records, asFollower: simState.mirror);
       if (simApplied > 0) await simState.onRemoteSimApplied();
       // Refresh the reused screens with the merged data.
       await appState.load();

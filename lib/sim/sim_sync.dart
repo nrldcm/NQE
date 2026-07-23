@@ -68,8 +68,23 @@ class SimSyncRepo {
 
   /// Apply remote records that belong to sandbox tables. Returns how many were
   /// actually applied (0 → nothing sim-related changed). Ledger records are
-  /// ignored here. Numeric last-writer-wins on the ms stamp.
-  Future<int> applyRemote(List<SyncRecord> remote) async {
+  /// ignored here.
+  ///
+  /// The MOBILE is the single source of truth: it runs the engine and OWNS the
+  /// positions/orders/trades. Because the two devices stamp rows with their own
+  /// wall clocks, a plain last-writer-wins merge silently drops genuine updates
+  /// whenever the clocks are skewed. So the merge is role-aware:
+  ///
+  ///  * [asFollower] == true (a paired desktop mirroring the phone): apply the
+  ///    authority's rows VERBATIM, clock-independent — the mirror can never
+  ///    drift or reject a real update. This is what makes phone→desktop reliable.
+  ///  * [asFollower] == false (the phone authority): never let a mirror's stale
+  ///    copy clobber engine-owned state. Accept the shared account row via LWW
+  ///    (so a desktop wallet top-up still lands and the phone re-pushes it),
+  ///    accept brand-NEW rows the phone doesn't have yet (an order the desktop
+  ///    placed/forwarded), and accept a mirror's cancel of a still-open order.
+  Future<int> applyRemote(List<SyncRecord> remote,
+      {bool asFollower = false}) async {
     final sim = remote.where((r) => kSimTables.contains(r.table)).toList();
     if (sim.isEmpty) return 0;
     final d = await SimDb.instance.db;
@@ -80,9 +95,31 @@ class SimSyncRepo {
     var applied = 0;
     await d.transaction((txn) async {
       for (final r in sim) {
-        final localStamp = await _localStamp(txn, r.table, r.id);
         final remoteStamp = int.tryParse(r.updatedAt) ?? 0;
-        if (localStamp != null && remoteStamp <= localStamp) continue;
+
+        if (!asFollower) {
+          // ---- authority (phone) acceptance gate ----
+          final localStamp = await _localStamp(txn, r.table, r.id);
+          final isAccount = r.table == 'sim_accounts';
+          if (isAccount) {
+            // Shared row → last-writer-wins.
+            if (localStamp != null && remoteStamp <= localStamp) continue;
+          } else if (r.deleted) {
+            // The only mirror-originated delete we honor is a cancel of an
+            // order that is still open here; never delete filled history /
+            // positions / trades the engine owns.
+            if (r.table != 'sim_orders') continue;
+            final rows = await txn.query('sim_orders',
+                columns: ['status'], where: 'id=?', whereArgs: [r.id], limit: 1);
+            final open = rows.isNotEmpty && (rows.first['status'] == 0);
+            if (!open) continue;
+          } else {
+            // A live non-account row is accepted only if brand new here (a
+            // forwarded order). Otherwise the phone already owns it — ignore.
+            if (localStamp != null) continue;
+          }
+        }
+        // (Follower path applies everything verbatim — no gate.)
 
         if (r.deleted) {
           await txn.delete(r.table, where: 'id=?', whereArgs: [r.id]);
