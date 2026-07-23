@@ -18,6 +18,7 @@ import 'sandbox_market_panel.dart';
 import 'sandbox_notices.dart';
 import 'sandbox_positions_panel.dart';
 import 'sandbox_trade_ticket.dart';
+import 'sandbox_wallet_panel.dart';
 
 class SandboxScreen extends StatefulWidget {
   const SandboxScreen({super.key});
@@ -35,7 +36,7 @@ class _SandboxScreenState extends State<SandboxScreen>
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 4, vsync: this);
+    _tabs = TabController(length: 5, vsync: this);
     simState.init();
     // Subscribe the whole catalogue once, off-build (batched, single notify),
     // so market rows show live quotes without ever subscribing during build.
@@ -141,6 +142,7 @@ class _SandboxScreenState extends State<SandboxScreen>
             tabs: const [
               Tab(text: 'Trade'),
               Tab(text: 'Positions'),
+              Tab(text: 'Wallet'),
               Tab(text: 'Books'),
               Tab(text: 'Markets'),
             ],
@@ -154,6 +156,10 @@ class _SandboxScreenState extends State<SandboxScreen>
               const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 16),
                 child: SandboxPositionsPanel(),
+              ),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 16),
+                child: SandboxWalletPanel(),
               ),
               const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 16),
@@ -352,8 +358,30 @@ class _Header extends StatelessWidget {
                 icon: Icon(Icons.more_vert, color: pal.textHi),
                 onSelected: (v) {
                   if (v == 'reset') _confirmReset(context);
+                  if (v == 'topup') sandboxTopUp(context);
+                  if (v == 'cashout') sandboxCashOut(context);
                 },
                 itemBuilder: (context) => const [
+                  PopupMenuItem(
+                    value: 'topup',
+                    child: Row(
+                      children: [
+                        Icon(Icons.account_balance_wallet_outlined, size: 18),
+                        SizedBox(width: 10),
+                        Text('Top up wallet'),
+                      ],
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: 'cashout',
+                    child: Row(
+                      children: [
+                        Icon(Icons.arrow_outward, size: 18),
+                        SizedBox(width: 10),
+                        Text('Cash out'),
+                      ],
+                    ),
+                  ),
                   PopupMenuItem(
                     value: 'reset',
                     child: Row(
@@ -438,8 +466,9 @@ class _Header extends StatelessWidget {
       builder: (c) => AlertDialog(
         title: const Text('Reset sandbox?'),
         content: const Text(
-            'This closes all positions and orders and restores your virtual '
-            'balance to the starting cash. Trade history is kept.'),
+            'This closes all positions and orders, clears your trade and order '
+            'history, and restores your virtual balance to the starting cash. '
+            'This cannot be undone.'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(c, false),

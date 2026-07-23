@@ -4,6 +4,7 @@
 // hit, liquidation). Screens listen via ListenableBuilder, like `appState`.
 import 'package:flutter/foundation.dart';
 
+import '../format.dart';
 import '../util.dart';
 import 'sim_candles.dart';
 import 'sim_db.dart';
@@ -327,6 +328,44 @@ class SimState extends ChangeNotifier {
         SimNoticeType.info, 'Sandbox reset', 'Balance restored to starting cash.',
         0));
     notifyListeners();
+  }
+
+  /// Wallet top-up: add virtual cash to Free Cash. The deposit basis
+  /// (startingCash) rises with it, so a deposit is NOT counted as trading
+  /// profit — Total Return keeps measuring performance, not funding.
+  Future<void> topUp(double amount) async {
+    final acc = _pf?.account;
+    if (acc == null || !amount.isFinite || amount <= 0) return;
+    await _serial(() async {
+      acc.cash += amount;
+      acc.startingCash += amount;
+      acc.updatedAtMs = _now();
+      await _db.upsertAccount(acc);
+    });
+    _pushNotice(SimNotice(SimNoticeType.info, 'Wallet topped up',
+        'Added ${money(amount, currency: currency)} to Free Cash.', _now()));
+    notifyListeners();
+  }
+
+  /// Wallet cash-out: withdraw from Free Cash. Capped at the available Free
+  /// Cash (can't withdraw money tied up in open positions). Lowers the deposit
+  /// basis too, so a withdrawal isn't booked as a loss. Returns false if the
+  /// amount is invalid or exceeds Free Cash.
+  Future<bool> cashOut(double amount) async {
+    final acc = _pf?.account;
+    if (acc == null || !amount.isFinite || amount <= 0) return false;
+    if (amount > acc.cash) return false;
+    await _serial(() async {
+      acc.cash -= amount;
+      acc.startingCash = (acc.startingCash - amount).clamp(0, double.infinity);
+      acc.updatedAtMs = _now();
+      await _db.upsertAccount(acc);
+    });
+    _pushNotice(SimNotice(SimNoticeType.info, 'Cashed out',
+        'Withdrew ${money(amount, currency: currency)} from Free Cash.',
+        _now()));
+    notifyListeners();
+    return true;
   }
 
   Future<void> addWatch(String symbol, SimMarket market) async {
