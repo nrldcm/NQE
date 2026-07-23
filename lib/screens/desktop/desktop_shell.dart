@@ -161,14 +161,18 @@ class _DesktopBootstrapState extends State<_DesktopBootstrap> {
       return DesktopLock(onUnlocked: () => setState(() => _unlocked = true));
     }
 
-    // Paired + unlocked. Gate the workspace on a live link: once the connection
-    // gives up (disconnected), fall back to a reconnect / re-pair screen so a
-    // stale, unsynced desktop can't be mistaken for a live one.
+    // Paired + unlocked. Gate the workspace on a LIVE link: the desktop is a
+    // pure mirror, so the instant the connection is anything but fully
+    // connected (connecting, reconnecting, disconnected, idle) we block the UI
+    // behind the reconnect gate — a desktop that isn't live must never be
+    // driven, since it has no data of its own.
     return ListenableBuilder(
       listenable: SyncClient.instance,
       builder: (context, _) {
-        if (SyncClient.instance.state == SyncConn.disconnected) {
+        final state = SyncClient.instance.state;
+        if (state != SyncConn.connected) {
           return _ReconnectGate(
+            state: state,
             message: SyncClient.instance.statusMessage,
             onRetry: () => SyncClient.instance.reconnect(),
             onRepair: () {
@@ -190,10 +194,12 @@ class _DesktopBootstrapState extends State<_DesktopBootstrap> {
 /// auto-reconnecting in the background, and offers a manual retry or a jump back
 /// to the re-pair gate.
 class _ReconnectGate extends StatelessWidget {
+  final SyncConn state;
   final String? message;
   final VoidCallback onRetry;
   final VoidCallback onRepair;
   const _ReconnectGate({
+    required this.state,
     required this.message,
     required this.onRetry,
     required this.onRepair,
@@ -202,6 +208,9 @@ class _ReconnectGate extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final pal = context.nqe;
+    // Still trying (connecting/reconnecting/idle) vs given-up (disconnected).
+    final live =
+        state == SyncConn.connecting || state == SyncConn.reconnecting;
     return Scaffold(
       backgroundColor: pal.bg,
       body: Center(
@@ -212,9 +221,10 @@ class _ReconnectGate extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.link_off, size: 48, color: pal.textLo),
+                Icon(live ? Icons.sync : Icons.link_off,
+                    size: 48, color: pal.textLo),
                 const SizedBox(height: 18),
-                Text('Disconnected from phone',
+                Text(live ? 'Connecting to phone…' : 'Disconnected from phone',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                         color: pal.textHi,
@@ -223,8 +233,11 @@ class _ReconnectGate extends StatelessWidget {
                 const SizedBox(height: 8),
                 Text(
                   message ??
-                      'The desktop lost its link to the phone. It keeps trying '
-                          'to reconnect automatically.',
+                      (live
+                          ? 'Waiting for a live link to the phone. Trading is '
+                              'paused until it reconnects.'
+                          : 'The desktop lost its link to the phone. It keeps '
+                              'trying to reconnect automatically.'),
                   textAlign: TextAlign.center,
                   style: TextStyle(color: pal.textLo, fontSize: 13),
                 ),

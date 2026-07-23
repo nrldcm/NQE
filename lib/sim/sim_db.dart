@@ -15,11 +15,20 @@ class SimDb {
   /// up two isolated "devices" and exercise the real sync round-trip.
   SimDb.forDb(Database db) : _db = db;
 
+  /// Desktop-mirror flag: when true the sandbox DB lives in memory ONLY, so the
+  /// desktop persists nothing to disk and depends entirely on the phone (the
+  /// source of truth) for its data. Set once at desktop startup, before the
+  /// first DB access.
+  static bool ephemeral = false;
+
   Database? _db;
 
   Future<Database> get db async => _db ??= await _open();
 
   Future<Database> _open() async {
+    // The desktop mirror keeps no persistent database — a fresh in-memory one
+    // every launch, populated purely by what the phone syncs over.
+    if (ephemeral) return openAtPath(inMemoryDatabasePath);
     final dir = await getApplicationDocumentsDirectory();
     final path = p.join(dir.path, 'nqe_sandbox.db');
     return openAtPath(path);

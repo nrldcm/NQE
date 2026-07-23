@@ -8,6 +8,7 @@ import 'package:window_manager/window_manager.dart';
 import 'package:windows_single_instance/windows_single_instance.dart';
 
 import 'services/auth_service.dart';
+import 'sim/sim_db.dart';
 import 'sim/sim_state.dart';
 import 'screens/desktop/desktop_shell.dart';
 import 'screens/desktop_mode_gate.dart';
@@ -42,6 +43,11 @@ Future<void> main(List<String> args) async {
     // the sqflite FFI (sqlite3) implementation instead of the mobile plugin.
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
+
+    // The desktop is a pure mirror of the phone: keep the Sandbox database in
+    // memory only, so it persists nothing and depends entirely on the phone
+    // (the single source of truth) for its data — no divergent local state.
+    SimDb.ephemeral = true;
 
     await windowManager.ensureInitialized();
     const opts = WindowOptions(
