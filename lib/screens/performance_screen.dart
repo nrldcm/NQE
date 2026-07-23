@@ -1,22 +1,32 @@
 // Monthly Performance tracker — a manually-maintained table of each month's
 // start/end balance and wire-out, with P&L, % change, cumulative TWR and
-// drawdown all derived. Mirrors the fund's monthly P&L spreadsheet. Data syncs
-// with the phone like the rest of the ledger.
+// drawdown all derived. Mirrors the fund's monthly P&L spreadsheet. Rows carry
+// their own currency (USD / EUR / PHP) and the table filters to one currency at
+// a time so the totals stay meaningful. Data syncs with the phone like the
+// rest of the ledger.
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
+import '../format.dart';
 import '../models.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
 import '../util.dart';
 import '../widgets/common.dart';
 
-final _n0 = NumberFormat('#,##0');
+const List<String> kPerfCurrencies = ['USD', 'EUR', 'PHP'];
+
+const List<String> kMonths = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
 final _n2 = NumberFormat('#,##0.##');
 
-String _money(double v) => '\$${_n0.format(v)}';
-String _pct(double v) => '${v >= 0 ? '' : '-'}${_n0.format(v.abs())}%';
+String _money(double v, String cur) => money(v, currency: cur, decimals: 0);
+String _pct(double v) =>
+    '${v >= 0 ? '' : '-'}${NumberFormat('#,##0').format(v.abs())}%';
 
 /// One computed table row (a stored month plus its derived cumulative TWR).
 class _Row {
@@ -25,13 +35,20 @@ class _Row {
   _Row(this.m, this.twrPct);
 }
 
-class PerformanceScreen extends StatelessWidget {
+class PerformanceScreen extends StatefulWidget {
   const PerformanceScreen({super.key});
+
+  @override
+  State<PerformanceScreen> createState() => _PerformanceScreenState();
+}
+
+class _PerformanceScreenState extends State<PerformanceScreen> {
+  String _cur = 'USD';
 
   List<_Row> _rows() {
     var factor = 1.0;
     final out = <_Row>[];
-    for (final m in appState.perfMonths) {
+    for (final m in appState.perfMonths.where((e) => e.currency == _cur)) {
       factor *= (1 + m.pctChange / 100);
       out.add(_Row(m, (factor - 1) * 100));
     }
@@ -57,53 +74,101 @@ class PerformanceScreen extends StatelessWidget {
         listenable: appState,
         builder: (context, _) {
           final rows = _rows();
-          if (rows.isEmpty) {
-            return Center(
-              child: EmptyState(
-                icon: Icons.calendar_month_outlined,
-                title: 'No months yet',
-                subtitle: 'Add a month with its start & end balance',
-                action: FilledButton.icon(
-                  onPressed: () => _edit(context, null),
-                  icon: const Icon(Icons.add, size: 18),
-                  label: const Text('Add month'),
-                ),
+          return Column(
+            children: [
+              _currencyBar(pal),
+              Divider(height: 1, color: pal.line),
+              Expanded(
+                child: rows.isEmpty
+                    ? Center(
+                        child: EmptyState(
+                          icon: Icons.calendar_month_outlined,
+                          title: 'No $_cur months yet',
+                          subtitle: 'Add a month with its start & end balance',
+                          action: FilledButton.icon(
+                            onPressed: () => _edit(context, null),
+                            icon: const Icon(Icons.add, size: 18),
+                            label: const Text('Add month'),
+                          ),
+                        ),
+                      )
+                    : _table(pal, rows),
               ),
-            );
-          }
-          final totalPnl = rows.fold<double>(0, (s, r) => s + r.m.pnl);
-          final totalWire = rows.fold<double>(0, (s, r) => s + r.m.wireOut);
-          return SingleChildScrollView(
-            scrollDirection: Axis.vertical,
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _headerRow(pal),
-                  for (final r in rows)
-                    InkWell(
-                      onTap: () => _edit(context, r.m),
-                      child: _dataRow(pal, r),
-                    ),
-                  _totalsRow(pal, totalPnl, totalWire),
-                ],
-              ),
-            ),
+            ],
           );
         },
       ),
     );
   }
 
+  Widget _currencyBar(NqePalette pal) {
+    return Container(
+      color: pal.surface,
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+      child: Row(
+        children: [
+          for (final c in kPerfCurrencies) ...[
+            _curChip(pal, c),
+            const SizedBox(width: 8),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _curChip(NqePalette pal, String c) {
+    final sel = c == _cur;
+    return InkWell(
+      onTap: () => setState(() => _cur = c),
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+        decoration: BoxDecoration(
+          color: sel ? pal.textHi.withOpacity(0.12) : pal.surface2,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+              color: sel ? pal.textHi.withOpacity(0.4) : pal.line),
+        ),
+        child: Text('${currencySymbol(c)} $c',
+            style: TextStyle(
+                color: sel ? pal.textHi : pal.textLo,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700)),
+      ),
+    );
+  }
+
+  Widget _table(NqePalette pal, List<_Row> rows) {
+    final totalPnl = rows.fold<double>(0, (s, r) => s + r.m.pnl);
+    final totalWire = rows.fold<double>(0, (s, r) => s + r.m.wireOut);
+    return SingleChildScrollView(
+      scrollDirection: Axis.vertical,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _headerRow(pal),
+            for (final r in rows)
+              InkWell(
+                onTap: () => _edit(context, r.m),
+                child: _dataRow(pal, r),
+              ),
+            _totalsRow(pal, totalPnl, totalWire),
+          ],
+        ),
+      ),
+    );
+  }
+
   // ---- column widths --------------------------------------------------------
   static const _wMonth = 132.0;
-  static const _wBal = 112.0;
-  static const _wPnl = 104.0;
+  static const _wBal = 120.0;
+  static const _wPnl = 112.0;
   static const _wPct = 72.0;
   static const _wTwr = 92.0;
-  static const _wWire = 112.0;
+  static const _wWire = 120.0;
   static const _wDd = 66.0;
 
   Widget _cell(double w, Widget child,
@@ -117,11 +182,10 @@ class PerformanceScreen extends StatelessWidget {
         child: child,
       );
 
-  Widget _txt(String s, Color c, {FontWeight w = FontWeight.w600}) =>
-      Text(s,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(color: c, fontSize: 12.5, fontWeight: w));
+  Widget _txt(String s, Color c, {FontWeight w = FontWeight.w600}) => Text(s,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(color: c, fontSize: 12.5, fontWeight: w));
 
   Widget _headerRow(NqePalette pal) {
     Widget h(double w, String s, {Alignment a = Alignment.centerRight}) =>
@@ -146,9 +210,8 @@ class PerformanceScreen extends StatelessWidget {
 
   Widget _dataRow(NqePalette pal, _Row r) {
     final m = r.m;
+    final cur = m.currency;
     final pnlC = m.pnl >= 0 ? NqeColors.gain : NqeColors.loss;
-    // Wire-out cell tint: yellow for a withdrawal (money out), green for a
-    // deposit (money in) — matching the reference sheet.
     final wire = m.wireOut;
     final wireBg = wire == 0
         ? null
@@ -163,12 +226,12 @@ class PerformanceScreen extends StatelessWidget {
       child: Row(children: [
         _cell(_wMonth, _txt(m.title.isEmpty ? '—' : m.title, pal.textHi),
             align: Alignment.centerLeft),
-        _cell(_wBal, _txt(_money(m.startBal), pal.textHi)),
-        _cell(_wBal, _txt(_money(m.endBal), pal.textHi)),
-        _cell(_wPnl, _txt(_money(m.pnl), pnlC, w: FontWeight.w700)),
+        _cell(_wBal, _txt(_money(m.startBal, cur), pal.textHi)),
+        _cell(_wBal, _txt(_money(m.endBal, cur), pal.textHi)),
+        _cell(_wPnl, _txt(_money(m.pnl, cur), pnlC, w: FontWeight.w700)),
         _cell(_wPct, _txt(_pct(m.pctChange), pnlC)),
         _cell(_wTwr, _txt(_pct(r.twrPct), pal.textLo)),
-        _cell(_wWire, _txt(wire == 0 ? '—' : _money(wire), pal.textHi),
+        _cell(_wWire, _txt(wire == 0 ? '—' : _money(wire, cur), pal.textHi),
             bg: wireBg),
         _cell(_wDd, _txt(wire == 0 ? '—' : _pct(ddPct), pal.textLo)),
       ]),
@@ -186,11 +249,11 @@ class PerformanceScreen extends StatelessWidget {
             align: Alignment.centerLeft),
         _cell(_wBal, const SizedBox()),
         _cell(_wBal, const SizedBox()),
-        _cell(_wPnl,
-            _txt(_money(pnl), NqeColors.pnl(pnl), w: FontWeight.w800)),
+        _cell(_wPnl, _txt(_money(pnl, _cur), NqeColors.pnl(pnl),
+            w: FontWeight.w800)),
         _cell(_wPct, const SizedBox()),
         _cell(_wTwr, const SizedBox()),
-        _cell(_wWire, _txt(_money(wire), pal.textHi, w: FontWeight.w800)),
+        _cell(_wWire, _txt(_money(wire, _cur), pal.textHi, w: FontWeight.w800)),
         _cell(_wDd, const SizedBox()),
       ]),
     );
@@ -201,42 +264,54 @@ class PerformanceScreen extends StatelessWidget {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => _PerfEditor(existing: existing),
+      builder: (_) => _PerfEditor(existing: existing, defaultCurrency: _cur),
     );
   }
 }
 
 class _PerfEditor extends StatefulWidget {
   final PerfMonth? existing;
-  const _PerfEditor({this.existing});
+  final String defaultCurrency;
+  const _PerfEditor({this.existing, required this.defaultCurrency});
 
   @override
   State<_PerfEditor> createState() => _PerfEditorState();
 }
 
 class _PerfEditorState extends State<_PerfEditor> {
-  late final TextEditingController _title;
   late final TextEditingController _start;
   late final TextEditingController _end;
   late final TextEditingController _wire;
+  late final TextEditingController _year;
+  late int _monthIdx; // 0-11
+  late String _cur;
 
   @override
   void initState() {
     super.initState();
     final e = widget.existing;
-    _title = TextEditingController(text: e?.title ?? '');
     _start = TextEditingController(text: e == null ? '' : _n2.format(e.startBal));
     _end = TextEditingController(text: e == null ? '' : _n2.format(e.endBal));
     _wire = TextEditingController(
         text: (e == null || e.wireOut == 0) ? '' : _n2.format(e.wireOut));
+    _cur = e?.currency ?? widget.defaultCurrency;
+    // Recover month/year from the row's sort key (year*100 + month), else now.
+    final now = DateTime.now();
+    if (e != null && e.sortKey >= 100) {
+      _year = TextEditingController(text: '${e.sortKey ~/ 100}');
+      _monthIdx = ((e.sortKey % 100) - 1).clamp(0, 11);
+    } else {
+      _year = TextEditingController(text: '${now.year}');
+      _monthIdx = now.month - 1;
+    }
   }
 
   @override
   void dispose() {
-    _title.dispose();
     _start.dispose();
     _end.dispose();
     _wire.dispose();
+    _year.dispose();
     super.dispose();
   }
 
@@ -244,17 +319,19 @@ class _PerfEditorState extends State<_PerfEditor> {
       double.tryParse(c.text.replaceAll(',', '').trim()) ?? 0;
 
   Future<void> _save() async {
-    final title = _title.text.trim();
-    if (title.isEmpty) {
+    final year = int.tryParse(_year.text.trim());
+    if (year == null || year < 1900 || year > 3000) {
       ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Enter a month label.')));
+          const SnackBar(content: Text('Enter a valid year.')));
       return;
     }
     final e = widget.existing;
     final m = PerfMonth(
       id: e?.id ?? uid(),
-      title: title,
-      sortKey: e?.sortKey ?? appState.perfMonths.length,
+      title: '${kMonths[_monthIdx]} $year',
+      currency: _cur,
+      // Chronological sort key: year*100 + month (1-12).
+      sortKey: year * 100 + (_monthIdx + 1),
       startBal: _num(_start),
       endBal: _num(_end),
       wireOut: _num(_wire),
@@ -293,22 +370,78 @@ class _PerfEditorState extends State<_PerfEditor> {
                 height: 4,
                 margin: const EdgeInsets.only(bottom: 16),
                 decoration: BoxDecoration(
-                    color: pal.line,
-                    borderRadius: BorderRadius.circular(2)),
+                    color: pal.line, borderRadius: BorderRadius.circular(2)),
               ),
             ),
-            Text(widget.existing == null ? 'Add month' : 'Edit month',
-                style: TextStyle(
-                    color: pal.textHi,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w800)),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _title,
-              textCapitalization: TextCapitalization.words,
-              decoration: const InputDecoration(
-                  labelText: 'Month (e.g. January 2025)', isDense: true),
+            Row(
+              children: [
+                Text(widget.existing == null ? 'Add month' : 'Edit month',
+                    style: TextStyle(
+                        color: pal.textHi,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800)),
+                const Spacer(),
+                // Currency selector for this row.
+                for (final c in kPerfCurrencies)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 6),
+                    child: InkWell(
+                      onTap: () => setState(() => _cur = c),
+                      borderRadius: BorderRadius.circular(16),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: c == _cur
+                              ? pal.textHi.withOpacity(0.12)
+                              : pal.surface2,
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                              color: c == _cur
+                                  ? pal.textHi.withOpacity(0.4)
+                                  : pal.line),
+                        ),
+                        child: Text(currencySymbol(c),
+                            style: TextStyle(
+                                color: c == _cur ? pal.textHi : pal.textLo,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w800)),
+                      ),
+                    ),
+                  ),
+              ],
             ),
+            const SizedBox(height: 16),
+            Row(children: [
+              Expanded(
+                flex: 3,
+                child: DropdownButtonFormField<int>(
+                  value: _monthIdx,
+                  isExpanded: true,
+                  decoration:
+                      const InputDecoration(labelText: 'Month', isDense: true),
+                  items: [
+                    for (var i = 0; i < kMonths.length; i++)
+                      DropdownMenuItem(value: i, child: Text(kMonths[i])),
+                  ],
+                  onChanged: (v) => setState(() => _monthIdx = v ?? _monthIdx),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 2,
+                child: TextField(
+                  controller: _year,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [
+                    FilteringTextInputFormatter.digitsOnly,
+                    LengthLimitingTextInputFormatter(4),
+                  ],
+                  decoration:
+                      const InputDecoration(labelText: 'Year', isDense: true),
+                ),
+              ),
+            ]),
             const SizedBox(height: 12),
             Row(children: [
               Expanded(child: _numField(_start, 'Start balance')),

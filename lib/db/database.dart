@@ -11,7 +11,7 @@ import '../models.dart';
 /// sqflite on-disk schema version. Bumped to 3 for LAN sync change-tracking
 /// (nullable `updated_at` columns + `sync_tombstones`). Kept local to the DB
 /// layer so the export/import model version (`kSchemaVersion`) is untouched.
-const int _kDbSchemaVersion = 4;
+const int _kDbSchemaVersion = 5;
 
 /// Tables that participate in LAN sync (each has an `id` PK and an `updated_at`
 /// change marker, and generates a tombstone on delete). `api_keys` is device-
@@ -81,6 +81,11 @@ class LedgerDb {
         // ... and back-fills the nullable change-tracking column that CREATE
         // can't add to a pre-existing table.
         await _addUpdatedAtColumns(d);
+        // v5: multi-currency on the monthly performance rows.
+        try {
+          await d.execute(
+              "ALTER TABLE perf_months ADD COLUMN currency TEXT NOT NULL DEFAULT 'USD'");
+        } catch (_) {/* already present */}
       },
     );
   }
@@ -150,6 +155,7 @@ class LedgerDb {
     batch.execute('''
       CREATE TABLE IF NOT EXISTS perf_months (
         id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '',
+        currency TEXT NOT NULL DEFAULT 'USD',
         sort_key INTEGER NOT NULL DEFAULT 0,
         start_bal REAL NOT NULL DEFAULT 0, end_bal REAL NOT NULL DEFAULT 0,
         wire_out REAL NOT NULL DEFAULT 0, note TEXT NOT NULL DEFAULT '',

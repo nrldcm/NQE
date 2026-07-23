@@ -139,6 +139,7 @@ class Cashflow {
 class PerfMonth {
   String id;
   String title; // free label, e.g. "January 2024" or "July (2nd half)"
+  String currency; // 'USD' | 'EUR' | 'PHP' — this row's book currency
   int sortKey; // ordering, e.g. yyyymm*100 + slot (lower = earlier)
   double startBal;
   double endBal;
@@ -149,6 +150,7 @@ class PerfMonth {
   PerfMonth({
     required this.id,
     this.title = '',
+    this.currency = 'USD',
     this.sortKey = 0,
     this.startBal = 0,
     this.endBal = 0,
@@ -163,6 +165,7 @@ class PerfMonth {
   Map<String, Object?> toMap() => {
         'id': id,
         'title': title,
+        'currency': currency,
         'sort_key': sortKey,
         'start_bal': _fin(startBal),
         'end_bal': _fin(endBal),
@@ -174,6 +177,7 @@ class PerfMonth {
   factory PerfMonth.fromMap(Map<String, Object?> m) => PerfMonth(
         id: _s(m['id']),
         title: _s(m['title']),
+        currency: _s(m['currency'], 'USD'),
         sortKey: (m['sort_key'] as num?)?.toInt() ?? 0,
         startBal: _d(m['start_bal']),
         endBal: _d(m['end_bal']),
