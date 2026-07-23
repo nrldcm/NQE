@@ -141,8 +141,8 @@ class _SandboxScreenState extends State<SandboxScreen>
                 const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
             tabs: const [
               Tab(text: 'Trade'),
-              Tab(text: 'Positions'),
               Tab(text: 'Wallet'),
+              Tab(text: 'Positions'),
               Tab(text: 'Books'),
               Tab(text: 'Markets'),
             ],
@@ -155,11 +155,11 @@ class _SandboxScreenState extends State<SandboxScreen>
               _tradeTab(context),
               const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 16),
-                child: SandboxPositionsPanel(),
+                child: SandboxWalletPanel(),
               ),
               const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 16),
-                child: SandboxWalletPanel(),
+                child: SandboxPositionsPanel(),
               ),
               const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 16),
