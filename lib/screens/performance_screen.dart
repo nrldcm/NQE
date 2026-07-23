@@ -78,6 +78,7 @@ class _PerformanceScreenState extends State<PerformanceScreen> {
             children: [
               _currencyBar(pal),
               Divider(height: 1, color: pal.line),
+              if (rows.isNotEmpty) _yearSummary(pal, rows),
               Expanded(
                 child: rows.isEmpty
                     ? Center(
@@ -134,6 +135,121 @@ class _PerformanceScreenState extends State<PerformanceScreen> {
                 color: sel ? pal.textHi : pal.textLo,
                 fontSize: 12.5,
                 fontWeight: FontWeight.w700)),
+      ),
+    );
+  }
+
+  // ---- per-year comparison summary -----------------------------------------
+  Widget _yearSummary(NqePalette pal, List<_Row> rows) {
+    final byYear = <int, List<PerfMonth>>{};
+    for (final r in rows) {
+      (byYear[r.m.sortKey ~/ 100] ??= []).add(r.m);
+    }
+    final years = byYear.keys.toList()..sort();
+    final cards = <Widget>[];
+    double? prevPnl;
+    double? prevTwr;
+    for (final y in years) {
+      final ms = byYear[y]!;
+      final pnl = ms.fold<double>(0, (s, m) => s + m.pnl);
+      var f = 1.0;
+      for (final m in ms) {
+        f *= (1 + m.pctChange / 100);
+      }
+      final twr = (f - 1) * 100;
+      final wire = ms.fold<double>(0, (s, m) => s + m.wireOut);
+      cards.add(_yearCard(pal, y, pnl, twr, wire,
+          prevPnl == null ? null : pnl - prevPnl,
+          prevTwr == null ? null : twr - prevTwr));
+      prevPnl = pnl;
+      prevTwr = twr;
+    }
+    return Container(
+      color: pal.bg,
+      padding: const EdgeInsets.only(top: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 8, 14, 2),
+            child: Text('YEAR COMPARISON',
+                style: TextStyle(
+                    color: pal.textLo,
+                    fontSize: 10.5,
+                    letterSpacing: 1,
+                    fontWeight: FontWeight.w700)),
+          ),
+          SizedBox(
+            height: 116,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
+              children: [
+                for (final c in cards)
+                  Padding(
+                      padding: const EdgeInsets.only(right: 10), child: c),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _yearCard(NqePalette pal, int year, double pnl, double twr,
+      double wire, double? dPnl, double? dTwr) {
+    Widget kv(String k, String v, Color c) => Padding(
+          padding: const EdgeInsets.only(top: 3),
+          child: Row(children: [
+            Text(k, style: TextStyle(color: pal.textLo, fontSize: 11)),
+            const Spacer(),
+            Text(v,
+                style: TextStyle(
+                    color: c, fontSize: 12, fontWeight: FontWeight.w700)),
+          ]),
+        );
+    return Container(
+      width: 176,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: pal.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: pal.line),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Text('$year',
+                style: TextStyle(
+                    color: pal.textHi,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800)),
+            const Spacer(),
+            if (dPnl != null)
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: NqeColors.pnl(dPnl).withOpacity(0.14),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                    '${dPnl >= 0 ? '▲' : '▼'} ${_money(dPnl.abs(), _cur)}',
+                    style: TextStyle(
+                        color: NqeColors.pnl(dPnl),
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w800)),
+              ),
+          ]),
+          const SizedBox(height: 6),
+          kv('P&L', _money(pnl, _cur), NqeColors.pnl(pnl)),
+          kv('TWR', _pct(twr), pal.textHi),
+          kv('Wire out', _money(wire, _cur), pal.textLo),
+          if (dTwr != null)
+            kv('vs prev yr', '${dTwr >= 0 ? '+' : ''}${_pct(dTwr)} TWR',
+                NqeColors.pnl(dTwr)),
+        ],
       ),
     );
   }
@@ -282,9 +398,17 @@ class _PerfEditorState extends State<_PerfEditor> {
   late final TextEditingController _start;
   late final TextEditingController _end;
   late final TextEditingController _wire;
-  late final TextEditingController _year;
+  late int _year;
   late int _monthIdx; // 0-11
   late String _cur;
+
+  /// Selectable years: 2025 (inception) up to the current year — auto-extends
+  /// every new year — plus the row's own year when editing an older entry.
+  List<int> get _years {
+    final now = DateTime.now().year;
+    final set = <int>{for (var y = 2025; y <= now; y++) y, _year};
+    return set.toList()..sort();
+  }
 
   @override
   void initState() {
@@ -298,10 +422,10 @@ class _PerfEditorState extends State<_PerfEditor> {
     // Recover month/year from the row's sort key (year*100 + month), else now.
     final now = DateTime.now();
     if (e != null && e.sortKey >= 100) {
-      _year = TextEditingController(text: '${e.sortKey ~/ 100}');
+      _year = e.sortKey ~/ 100;
       _monthIdx = ((e.sortKey % 100) - 1).clamp(0, 11);
     } else {
-      _year = TextEditingController(text: '${now.year}');
+      _year = now.year;
       _monthIdx = now.month - 1;
     }
   }
@@ -311,7 +435,6 @@ class _PerfEditorState extends State<_PerfEditor> {
     _start.dispose();
     _end.dispose();
     _wire.dispose();
-    _year.dispose();
     super.dispose();
   }
 
@@ -319,12 +442,7 @@ class _PerfEditorState extends State<_PerfEditor> {
       double.tryParse(c.text.replaceAll(',', '').trim()) ?? 0;
 
   Future<void> _save() async {
-    final year = int.tryParse(_year.text.trim());
-    if (year == null || year < 1900 || year > 3000) {
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Enter a valid year.')));
-      return;
-    }
+    final year = _year;
     final e = widget.existing;
     final m = PerfMonth(
       id: e?.id ?? uid(),
@@ -430,15 +548,16 @@ class _PerfEditorState extends State<_PerfEditor> {
               const SizedBox(width: 12),
               Expanded(
                 flex: 2,
-                child: TextField(
-                  controller: _year,
-                  keyboardType: TextInputType.number,
-                  inputFormatters: [
-                    FilteringTextInputFormatter.digitsOnly,
-                    LengthLimitingTextInputFormatter(4),
-                  ],
+                child: DropdownButtonFormField<int>(
+                  value: _year,
+                  isExpanded: true,
                   decoration:
                       const InputDecoration(labelText: 'Year', isDense: true),
+                  items: [
+                    for (final y in _years)
+                      DropdownMenuItem(value: y, child: Text('$y')),
+                  ],
+                  onChanged: (v) => setState(() => _year = v ?? _year),
                 ),
               ),
             ]),
