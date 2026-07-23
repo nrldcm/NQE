@@ -71,7 +71,7 @@ jobs:
           --build-name=${{ steps.ver.outputs.version }}
           --build-number=${{ github.run_number }}
 
-      - name: Package TRUE single-file .exe (virtualized) + zip
+      - name: Package installer (.exe, no admin) + zip
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -79,90 +79,67 @@ jobs:
           if (!(Test-Path $rel)) { $rel = "build/windows/runner/Release" }
           $rel = (Resolve-Path $rel).Path
           $ver = "${{ steps.ver.outputs.version }}"
+          $cwd = (Get-Location).Path
+          $icon = (Resolve-Path "assets/icon/app_icon.ico").Path
 
           # Sanity: the built bundle MUST contain the Flutter runtime + assets.
           foreach ($need in @("nqe.exe", "flutter_windows.dll", "data")) {
             if (!(Test-Path (Join-Path $rel $need))) { throw "Missing $need in $rel — build is incomplete" }
           }
 
-          # Portable zip (fallback / power users).
+          # Portable zip (fallback / power users): extract anywhere, run nqe.exe.
           Compress-Archive -Path "$rel/*" -DestinationPath "NQE-desktop-v$ver.zip" -Force
           Copy-Item "NQE-desktop-v$ver.zip" "NQE-desktop-latest.zip" -Force
 
-          # --- TRUE single-file exe via Enigma Virtual Box: every DLL and the
-          # data/ folder are embedded INTO the exe and virtualized at runtime —
-          # NO extraction to disk, NO admin rights. It runs like one file. ---
-          Invoke-WebRequest -Uri "https://enigmaprotector.com/assets/files/enigmavb.exe" -OutFile "enigmavb_setup.exe"
-          Start-Process -FilePath ".\enigmavb_setup.exe" -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/SP-" -Wait
-          $evb = "C:\Program Files (x86)\Enigma Virtual Box\enigmavbconsole.exe"
-          if (!(Test-Path $evb)) { $evb = "C:\Program Files\Enigma Virtual Box\enigmavbconsole.exe" }
-          if (!(Test-Path $evb)) { throw "Enigma Virtual Box console not found after install" }
+          # --- Single-file Windows installer via Inno Setup. ONE .exe you run;
+          # a per-user install (PrivilegesRequired=lowest → NO admin), which
+          # antivirus trusts (unlike a packed/virtualized exe, which Defender
+          # false-flags). It installs to %LocalAppData%, makes shortcuts and
+          # launches the app. ---
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (!(Test-Path $iscc)) { $iscc = "C:\Program Files\Inno Setup 6\ISCC.exe" }
+          if (!(Test-Path $iscc)) { throw "Inno Setup (ISCC.exe) not found on the runner" }
 
-          $inputExe = Join-Path $rel "nqe.exe"
-          $outputExe = Join-Path (Get-Location).Path "NQE-v$ver.exe"
-
-          function XmlEsc([string]$s) {
-            return $s.Replace('&','&amp;').Replace('<','&lt;').Replace('>','&gt;').Replace('"','&quot;')
-          }
-          # Recursively emit the virtual-file tree for everything except nqe.exe
-          # (nqe.exe is the InputFile the box is built around).
-          function New-Nodes([string]$dir) {
-            $sb = New-Object System.Text.StringBuilder
-            foreach ($it in Get-ChildItem -LiteralPath $dir | Sort-Object Name) {
-              $nm = XmlEsc $it.Name
-              if ($it.PSIsContainer) {
-                [void]$sb.Append("<File><Type>3</Type><Name>$nm</Name><Files>")
-                [void]$sb.Append((New-Nodes $it.FullName))
-                [void]$sb.Append("</Files></File>")
-              } elseif ($it.FullName -ne $inputExe) {
-                $fp = XmlEsc $it.FullName
-                [void]$sb.Append("<File><Type>2</Type><Name>$nm</Name><File>$fp</File><ActiveX>false</ActiveX><ActiveXInstall>false</ActiveXInstall><Action>0</Action><OverwriteDateTime>false</OverwriteDateTime><OverwriteAttributes>false</OverwriteAttributes><PassCommandLine>false</PassCommandLine></File>")
-              }
-            }
-            return $sb.ToString()
-          }
-          $nodes = New-Nodes $rel
-
-          # Build the .evb as an indented array-join (NOT a column-0 here-string,
-          # which would break the YAML block AND put whitespace before <?xml>).
-          $evbLines = @(
-            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
-            '<>',
-            "`t<InputFile>$(XmlEsc $inputExe)</InputFile>",
-            "`t<OutputFile>$(XmlEsc $outputExe)</OutputFile>",
-            "`t<Files>",
-            "`t`t<Enabled>true</Enabled>",
-            "`t`t<DeleteExtractedOnExit>false</DeleteExtractedOnExit>",
-            "`t`t<CompressFiles>true</CompressFiles>",
-            "`t`t<Files>",
-            "`t`t`t<File>",
-            "`t`t`t`t<Type>3</Type>",
-            "`t`t`t`t<Name>%DEFAULT FOLDER%</Name>",
-            "`t`t`t`t<Files>$nodes</Files>",
-            "`t`t`t</File>",
-            "`t`t</Files>",
-            "`t</Files>",
-            "`t<Options>",
-            "`t`t<ShareVirtualSystem>false</ShareVirtualSystem>",
-            "`t`t<MapExecutableWithTemporaryFile>true</MapExecutableWithTemporaryFile>",
-            "`t`t<AllowRunningOfVirtualExeFiles>true</AllowRunningOfVirtualExeFiles>",
-            "`t</Options>",
-            '</>'
+          # Build the .iss as an indented array-join (keeps the YAML block valid).
+          $issLines = @(
+            '[Setup]',
+            'AppId={{6B9C1E90-NQE0-4A11-Willong-Capital0001}',
+            'AppName=NQE',
+            "AppVersion=$ver",
+            'AppPublisher=Willong Capital',
+            'DefaultDirName={localappdata}\Programs\NQE',
+            'DisableProgramGroupPage=yes',
+            'DisableDirPage=yes',
+            'PrivilegesRequired=lowest',
+            "OutputDir=$cwd",
+            "OutputBaseFilename=NQE-v$ver",
+            "SetupIconFile=$icon",
+            'UninstallDisplayIcon={app}\nqe.exe',
+            'Compression=lzma2',
+            'SolidCompression=yes',
+            'WizardStyle=modern',
+            '',
+            '[Files]',
+            "Source: `"$rel\*`"; DestDir: `"{app}`"; Flags: recursesubdirs createallsubdirs ignoreversion",
+            '',
+            '[Icons]',
+            'Name: "{autoprograms}\NQE"; Filename: "{app}\nqe.exe"',
+            'Name: "{autodesktop}\NQE"; Filename: "{app}\nqe.exe"',
+            '',
+            '[Run]',
+            'Filename: "{app}\nqe.exe"; Description: "Launch NQE"; Flags: nowait postinstall skipifsilent'
           )
-          [System.IO.File]::WriteAllText("nqe.evb", ($evbLines -join "`r`n"), (New-Object System.Text.UTF8Encoding($false)))
-          Write-Host "Running Enigma Virtual Box..."
-          & $evb "nqe.evb"
+          [System.IO.File]::WriteAllText("nqe.iss", ($issLines -join "`r`n"), (New-Object System.Text.UTF8Encoding($false)))
+          & $iscc "nqe.iss"
 
-          # HARD verification: a real virtualized exe embeds the whole bundle, so
-          # it must be large (~13 MB). This stops any broken/empty exe shipping.
-          if (!(Test-Path $outputExe)) { throw "Enigma did not produce the exe" }
-          $size = (Get-Item $outputExe).Length
-          Write-Host ("Single exe size: {0:N1} MB" -f ($size / 1MB))
-          if ($size -lt 8MB) { throw "Single exe is only $size bytes — files were not embedded" }
-          Copy-Item $outputExe "NQE-desktop-latest.exe" -Force
+          $outExe = Join-Path $cwd "NQE-v$ver.exe"
+          if (!(Test-Path $outExe)) { throw "Inno Setup did not produce the installer" }
+          $size = (Get-Item $outExe).Length
+          Write-Host ("Installer size: {0:N1} MB" -f ($size / 1MB))
+          if ($size -lt 6MB) { throw "Installer is only $size bytes — the app wasn't bundled" }
+          Copy-Item $outExe "NQE-desktop-latest.exe" -Force
 
-          # Keep only the NQE artifacts.
-          Remove-Item enigmavb_setup.exe, nqe.evb -Force -ErrorAction SilentlyContinue
+          Remove-Item nqe.iss -Force -ErrorAction SilentlyContinue
           Write-Host "Artifacts:"
           Get-ChildItem NQE-*.exe, NQE-*.zip | Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB,1)}}
 
@@ -185,7 +162,7 @@ jobs:
             NQE v${{ steps.ver.outputs.version }} — Funds managed by Willong Capital.
 
             • Android — install `NQE-v${{ steps.ver.outputs.version }}.apk`
-            • Windows — run `NQE-v${{ steps.ver.outputs.version }}.exe` (one file, no install, no admin)
+            • Windows — run `NQE-v${{ steps.ver.outputs.version }}.exe` (installer, no admin). Or use the `.zip` (extract → run `nqe.exe`).
           files: |
             NQE-*.exe
             NQE-*.zip
