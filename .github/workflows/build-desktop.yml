@@ -123,31 +123,33 @@ jobs:
           }
           $nodes = New-Nodes $rel
 
-          $proj = @"
-<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<>
-	<InputFile>$(XmlEsc $inputExe)</InputFile>
-	<OutputFile>$(XmlEsc $outputExe)</OutputFile>
-	<Files>
-		<Enabled>true</Enabled>
-		<DeleteExtractedOnExit>false</DeleteExtractedOnExit>
-		<CompressFiles>true</CompressFiles>
-		<Files>
-			<File>
-				<Type>3</Type>
-				<Name>%DEFAULT FOLDER%</Name>
-				<Files>$nodes</Files>
-			</File>
-		</Files>
-	</Files>
-	<Options>
-		<ShareVirtualSystem>false</ShareVirtualSystem>
-		<MapExecutableWithTemporaryFile>true</MapExecutableWithTemporaryFile>
-		<AllowRunningOfVirtualExeFiles>true</AllowRunningOfVirtualExeFiles>
-	</Options>
-</>
-"@
-          [System.IO.File]::WriteAllText("nqe.evb", $proj, (New-Object System.Text.UTF8Encoding($false)))
+          # Build the .evb as an indented array-join (NOT a column-0 here-string,
+          # which would break the YAML block AND put whitespace before <?xml>).
+          $evbLines = @(
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+            '<>',
+            "`t<InputFile>$(XmlEsc $inputExe)</InputFile>",
+            "`t<OutputFile>$(XmlEsc $outputExe)</OutputFile>",
+            "`t<Files>",
+            "`t`t<Enabled>true</Enabled>",
+            "`t`t<DeleteExtractedOnExit>false</DeleteExtractedOnExit>",
+            "`t`t<CompressFiles>true</CompressFiles>",
+            "`t`t<Files>",
+            "`t`t`t<File>",
+            "`t`t`t`t<Type>3</Type>",
+            "`t`t`t`t<Name>%DEFAULT FOLDER%</Name>",
+            "`t`t`t`t<Files>$nodes</Files>",
+            "`t`t`t</File>",
+            "`t`t</Files>",
+            "`t</Files>",
+            "`t<Options>",
+            "`t`t<ShareVirtualSystem>false</ShareVirtualSystem>",
+            "`t`t<MapExecutableWithTemporaryFile>true</MapExecutableWithTemporaryFile>",
+            "`t`t<AllowRunningOfVirtualExeFiles>true</AllowRunningOfVirtualExeFiles>",
+            "`t</Options>",
+            '</>'
+          )
+          [System.IO.File]::WriteAllText("nqe.evb", ($evbLines -join "`r`n"), (New-Object System.Text.UTF8Encoding($false)))
           Write-Host "Running Enigma Virtual Box..."
           & $evb "nqe.evb"
 
