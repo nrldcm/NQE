@@ -386,13 +386,13 @@ class _OverviewStrip extends StatelessWidget {
           icon: Icons.swap_horiz),
     ];
 
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    // Wrap (not a fixed 6-wide Row) so on a narrow center column the cards flow
+    // to a second line and stay legible instead of being crushed to ~40px each.
+    return Wrap(
+      spacing: 10,
+      runSpacing: 10,
       children: [
-        for (var i = 0; i < cards.length; i++) ...[
-          if (i > 0) const SizedBox(width: 10),
-          Expanded(child: cards[i]),
-        ],
+        for (final c in cards) SizedBox(width: 158, child: c),
       ],
     );
   }

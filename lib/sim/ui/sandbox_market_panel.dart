@@ -1,6 +1,7 @@
 // Browse & search instruments across PSE stocks, Forex and Crypto with live
 // simulated/real quotes. Tap a row to select it for the trade ticket; star it
 // to add to the watchlist.
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 
 import '../../theme.dart';
@@ -72,15 +73,29 @@ class _SandboxMarketPanelState extends State<SandboxMarketPanel> {
         const SizedBox(height: 10),
         SizedBox(
           height: 34,
-          child: ListView(
-            scrollDirection: Axis.horizontal,
-            children: [
-              _chip('All', _filter == null, () => setState(() => _filter = null)),
-              for (final m in SimMarket.values)
-                _chip(marketLabel(m), _filter == m,
-                    () => setState(() => _filter = m),
-                    color: marketColor(m)),
-            ],
+          // Allow click-and-drag (mouse/trackpad) to scroll the pills on
+          // desktop — a plain horizontal ListView otherwise only scrolls by
+          // wheel there, hiding the later filters (Indices / Commodities).
+          child: ScrollConfiguration(
+            behavior: ScrollConfiguration.of(context).copyWith(
+              dragDevices: {
+                PointerDeviceKind.touch,
+                PointerDeviceKind.mouse,
+                PointerDeviceKind.trackpad,
+              },
+              scrollbars: false,
+            ),
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children: [
+                _chip('All', _filter == null,
+                    () => setState(() => _filter = null)),
+                for (final m in SimMarket.values)
+                  _chip(marketLabel(m), _filter == m,
+                      () => setState(() => _filter = m),
+                      color: marketColor(m)),
+              ],
+            ),
           ),
         ),
         const SizedBox(height: 6),

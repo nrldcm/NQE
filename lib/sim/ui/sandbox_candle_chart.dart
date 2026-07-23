@@ -140,7 +140,9 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
       atr: _ind.contains(_kAtr) ? atr(candles) : null,
       obv: _ind.contains(_kObv) ? obv(candles, volume) : null,
     );
-    final totalHeight = widget.height + _subCount * 68.0;
+    // Reserve a bottom band for the time axis so its labels don't overlap the
+    // last sub-panel / the main panel's bottom candles.
+    final totalHeight = widget.height + _subCount * 68.0 + 18;
 
     // Compute the main-panel price range ONCE here so the painter and the
     // drawing-tool gestures share an identical price<->y mapping (no drift).
@@ -175,46 +177,55 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
                 builder: (context, c) {
                   final width = c.maxWidth;
                   _plotW = (width - 58.0).clamp(1.0, double.infinity);
+                  final painter = CustomPaint(
+                    size: Size(width, totalHeight),
+                    painter: _CandlePainter(
+                      candles: candles,
+                      market: widget.market,
+                      tf: _tf,
+                      cross: _cross,
+                      data: data,
+                      mainHeight: widget.height,
+                      lo: _lo,
+                      hi: _hi,
+                      up: NqeColors.gain,
+                      down: NqeColors.loss,
+                      grid: pal.line,
+                      textColor: pal.textLo,
+                      orderLine: line?.price,
+                      orderUp: line?.isBuy ?? true,
+                      hlines: _hlines,
+                      trends: _trends,
+                      trendPreview: _trendPreview,
+                    ),
+                  );
+                  // Only the trend tool needs a two-axis pan. Cursor/hline use a
+                  // horizontal-only drag so a VERTICAL swipe over the chart still
+                  // scrolls the surrounding page instead of being swallowed.
+                  final gesture = _tool == _DrawTool.trend
+                      ? GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onPanStart: (d) => _onPanStart(
+                              d.localPosition, width, candles.length),
+                          onPanUpdate: (d) => _onPanUpdate(
+                              d.localPosition, width, candles.length),
+                          onPanEnd: (_) => _onPanEnd(),
+                          child: painter,
+                        )
+                      : GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTapDown: (d) => _onTapDown(
+                              d.localPosition, width, candles.length),
+                          onHorizontalDragStart: (d) => _onCrossDrag(
+                              d.localPosition.dx, width, candles.length),
+                          onHorizontalDragUpdate: (d) => _onCrossDrag(
+                              d.localPosition.dx, width, candles.length),
+                          child: painter,
+                        );
                   return Stack(
                     children: [
-                      GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTapDown: (d) => _onTapDown(d.localPosition, width,
-                            candles.length),
-                        onTap: _onTap,
-                        onPanStart: (d) =>
-                            _onPanStart(d.localPosition, width, candles.length),
-                        onPanUpdate: (d) => _onPanUpdate(
-                            d.localPosition, width, candles.length),
-                        onPanEnd: (_) => _onPanEnd(),
-                        child: CustomPaint(
-                          size: Size(width, totalHeight),
-                          painter: _CandlePainter(
-                            candles: candles,
-                            market: widget.market,
-                            tf: _tf,
-                            cross: _cross,
-                            data: data,
-                            mainHeight: widget.height,
-                            lo: _lo,
-                            hi: _hi,
-                            up: NqeColors.gain,
-                            down: NqeColors.loss,
-                            grid: pal.line,
-                            textColor: pal.textLo,
-                            orderLine: line?.price,
-                            orderUp: line?.isBuy ?? true,
-                            hlines: _hlines,
-                            trends: _trends,
-                            trendPreview: _trendPreview,
-                          ),
-                        ),
-                      ),
-                      Positioned(
-                        left: 0,
-                        top: 0,
-                        child: _drawingRail(context),
-                      ),
+                      gesture,
+                      Positioned(left: 0, top: 0, child: _drawingRail(context)),
                     ],
                   );
                 },
@@ -284,14 +295,20 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
       case _DrawTool.cursor:
         _updateCross(p.dx, width, n);
       case _DrawTool.hline:
-        setState(() => _hlines.add(_HLine(_priceFromY(p.dy))));
+        // Only place a line when the tap is in the main price panel — a tap in
+        // a sub-panel (Volume/RSI/…) would otherwise snap to the bottom price.
+        if (p.dy <= widget.height) {
+          setState(() => _hlines.add(_HLine(_priceFromY(p.dy))));
+        }
       case _DrawTool.trend:
         break; // trend lines are drawn with a drag
     }
   }
 
-  void _onTap() {
-    if (_tool == _DrawTool.cursor) setState(() => _cross = null);
+  /// Crosshair drag (cursor tool only) — a horizontal-only recognizer, so a
+  /// vertical swipe still scrolls the page.
+  void _onCrossDrag(double dx, double width, int n) {
+    if (_tool == _DrawTool.cursor) _updateCross(dx, width, n);
   }
 
   void _onPanStart(Offset p, double width, int n) {

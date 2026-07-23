@@ -80,7 +80,15 @@ class _SandboxTradeTicketState extends State<SandboxTradeTicket> {
   @override
   void didUpdateWidget(covariant SandboxTradeTicket old) {
     super.didUpdateWidget(old);
-    if (old.symbol != widget.symbol) _syncOrderLine();
+    if (old.symbol != widget.symbol) {
+      // Different instrument now — the typed prices/qty don't apply to it, so
+      // clear them first, then publish (which now clears the chart's line)
+      // rather than re-tagging the old price onto the new symbol's chart.
+      _limitCtrl.clear();
+      _stopCtrl.clear();
+      _qtyCtrl.clear();
+      _syncOrderLine();
+    }
   }
 
   /// Publish (or clear) the limit/stop/TP price the user is typing so the chart
@@ -120,11 +128,13 @@ class _SandboxTradeTicketState extends State<SandboxTradeTicket> {
 
   void _setQtyPct(double pct) {
     double q;
-    // Selling reduces a holding — so %/Max is a slice of what you actually
-    // hold (Max = sell everything). Buying (or opening a short with nothing
-    // held) is instead bounded by buying power.
-    if (_side == OrderSide.sell && _holdingQty > 0) {
-      q = _holdingQty * pct;
+    // If this order REDUCES the current position (sell against a long, or buy
+    // against a short), %/Max is a slice of what you hold — Max flattens the
+    // position exactly. Otherwise (opening/adding) it's bounded by buying power.
+    final reducing = (_side == OrderSide.sell && _holdingQty > 0) ||
+        (_side == OrderSide.buy && _holdingQty < 0);
+    if (reducing) {
+      q = _holdingQty.abs() * pct;
     } else {
       q = _maxQty(_refPrice) * pct;
     }
