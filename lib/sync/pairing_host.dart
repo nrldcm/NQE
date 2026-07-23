@@ -55,9 +55,11 @@ class PairingHost extends ChangeNotifier {
   bool get hasOffer => _offer != null;
 
   /// Start listening: pick a LAN IP, mint an ephemeral key pair + session id,
-  /// and bind the pairing WebSocket. Safe to call again to restart a session.
+  /// and bind the pairing WebSocket. Safe to call again to restart a session
+  /// (a fresh key pair + session id means any old QR / offer is invalidated).
   Future<void> start() async {
     await stop();
+    _offer = null; // a restart invalidates any previous scan
     try {
       _lanIp = await _resolveLanIp();
       if (_lanIp == null) {

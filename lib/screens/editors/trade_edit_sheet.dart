@@ -143,7 +143,7 @@ class _TradeEditorState extends State<_TradeEditor> {
             label: 'Date',
             isoDate: _date,
             onChanged: (v) => setState(() => _date = v)),
-        EditorField(label: 'Stock code', controller: _stock),
+        EditorSymbolField(label: 'Stock code', controller: _stock),
         EditorField(
             label: 'Shares / Qty',
             controller: _shares,

@@ -1,5 +1,7 @@
 // Shared bottom-sheet chrome + form fields for all the editor sheets.
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import '../../data/symbols.dart';
 import '../../theme.dart';
 
 class EditorScaffold extends StatelessWidget {
@@ -114,6 +116,106 @@ class EditorField extends StatelessWidget {
         maxLines: obscure ? 1 : maxLines,
         obscureText: obscure,
         decoration: InputDecoration(labelText: label, hintText: hint),
+      ),
+    );
+  }
+}
+
+/// A searchable "Stock code" field: type a ticker or company name and pick from
+/// live suggestions (bundled catalogue). Free-text is still allowed — any symbol
+/// not in the list can be typed and saved as-is. Wraps an externally-owned
+/// [controller] so the parent editor keeps ownership of the value.
+class EditorSymbolField extends StatefulWidget {
+  final String label;
+  final TextEditingController controller;
+  final String? hint;
+  const EditorSymbolField({
+    super.key,
+    required this.label,
+    required this.controller,
+    this.hint,
+  });
+
+  @override
+  State<EditorSymbolField> createState() => _EditorSymbolFieldState();
+}
+
+class _EditorSymbolFieldState extends State<EditorSymbolField> {
+  final FocusNode _focus = FocusNode();
+
+  @override
+  void dispose() {
+    _focus.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = context.nqe;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: RawAutocomplete<StockSymbol>(
+        textEditingController: widget.controller,
+        focusNode: _focus,
+        optionsBuilder: (TextEditingValue v) => searchSymbols(v.text),
+        displayStringForOption: (s) => s.code,
+        onSelected: (s) {
+          widget.controller.text = s.code;
+          _focus.unfocus();
+        },
+        fieldViewBuilder: (context, controller, focusNode, onSubmit) {
+          return TextField(
+            controller: controller,
+            focusNode: focusNode,
+            textCapitalization: TextCapitalization.characters,
+            inputFormatters: [
+              TextInputFormatter.withFunction((oldV, newV) =>
+                  newV.copyWith(text: newV.text.toUpperCase())),
+            ],
+            decoration: InputDecoration(
+              labelText: widget.label,
+              hintText: widget.hint ?? 'Search e.g. SM, BDO, Jollibee',
+              suffixIcon: Icon(Icons.search, size: 18, color: pal.textLo),
+            ),
+            onSubmitted: (_) => onSubmit(),
+          );
+        },
+        optionsViewBuilder: (context, onSelected, options) {
+          final width = MediaQuery.of(context).size.width - 40;
+          return Align(
+            alignment: Alignment.topLeft,
+            child: Material(
+              color: pal.surface,
+              elevation: 6,
+              borderRadius: BorderRadius.circular(12),
+              child: ConstrainedBox(
+                constraints:
+                    BoxConstraints(maxHeight: 280, maxWidth: width > 0 ? width : 360),
+                child: ListView.builder(
+                  padding: EdgeInsets.zero,
+                  shrinkWrap: true,
+                  itemCount: options.length,
+                  itemBuilder: (context, i) {
+                    final s = options.elementAt(i);
+                    return ListTile(
+                      dense: true,
+                      title: Text(s.code,
+                          style: TextStyle(
+                              color: pal.textHi, fontWeight: FontWeight.w700)),
+                      subtitle: Text(s.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: pal.textLo, fontSize: 12)),
+                      trailing: Text(s.market,
+                          style: TextStyle(color: pal.textLo, fontSize: 11)),
+                      onTap: () => onSelected(s),
+                    );
+                  },
+                ),
+              ),
+            ),
+          );
+        },
       ),
     );
   }
