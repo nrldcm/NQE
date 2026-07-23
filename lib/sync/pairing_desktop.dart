@@ -43,13 +43,20 @@ class DesktopPairing extends ChangeNotifier {
   String? _sid;
   String? _phonePubB64;
   String? _expectedCode;
-  String? _host;
-  int? _port;
+  bool _cancelled = false;
 
-  /// The 6-digit code this side computed (equals the phone's). Exposed for
-  /// tests only — the UI never reads it (the human types the phone's code).
+  /// The 6-digit code to DISPLAY on the desktop. The human compares it with the
+  /// code on the phone and taps Approve on the phone. Same value the phone
+  /// computes (shortCode over both public keys).
+  String? get code => _expectedCode;
+
   @visibleForTesting
   String? get expectedCode => _expectedCode;
+
+  /// Stop an in-flight approval poll (e.g. the user tapped Back).
+  void cancel() {
+    _cancelled = true;
+  }
 
   /// Scan the local network(s) for a phone running the NQE sync server on
   /// [port]. Returns reachable phone IPs (also stored in [found]).
@@ -111,28 +118,35 @@ class DesktopPairing extends ChangeNotifier {
     }
   }
 
-  /// Connect to the phone and run the key exchange. On success the state becomes
-  /// [DesktopPairState.awaitingCode].
-  Future<bool> connect(String host, int port) async {
+  /// Full pairing: connect (hello), then show the 6-digit code and POLL the
+  /// phone until the human taps Approve there — only then does the phone release
+  /// the sealed payload, which we open and return. Returns null on failure /
+  /// timeout / cancel. The approval-on-phone gate is the security boundary: a
+  /// LAN client that never got the human's tap can never obtain the secrets.
+  Future<PairingPayload?> pair(
+    String host,
+    int port, {
+    Duration pollInterval = const Duration(milliseconds: 1200),
+    int maxPolls = 100,
+  }) async {
+    _cancelled = false;
     _set(DesktopPairState.connecting, 'Connecting to $host:$port…');
     try {
       _keys = await Pairing.generateKeys();
-      final resp = await _postJson(
+      final hello = await _postJson(
           host, port, '/pair/hello', {'pub': _keys!.publicKeyB64});
-      if (resp == null) {
+      if (hello == null) {
         _set(DesktopPairState.error,
             'Could not reach the phone at $host:$port. Same Wi-Fi? Is “LAN Sync Server” on?');
-        return false;
+        return null;
       }
-      if (resp['error'] != null || resp['phonePub'] == null) {
+      if (hello['error'] != null || hello['phonePub'] == null) {
         _set(DesktopPairState.error,
-            'Phone isn’t ready to pair. Open NQE ▸ Settings ▸ Device Sync ▸ Pair Desktop Device on the phone, then try again.');
-        return false;
+            'Phone isn’t ready to pair. On the phone open NQE ▸ Settings ▸ Device Sync ▸ Pair Desktop Device, then try again.');
+        return null;
       }
-      _host = host;
-      _port = port;
-      _sid = resp['sid'].toString();
-      _phonePubB64 = resp['phonePub'].toString();
+      _sid = hello['sid'].toString();
+      _phonePubB64 = hello['phonePub'].toString();
       final phonePub = Pairing.publicKeyFromB64(_phonePubB64!);
       _expectedCode = await Pairing.shortCode(
         sid: _sid!,
@@ -140,46 +154,35 @@ class DesktopPairing extends ChangeNotifier {
         phonePub: phonePub,
       );
       _set(DesktopPairState.awaitingCode,
-          'Enter the 6-digit code shown on your phone.');
-      return true;
-    } catch (e) {
-      _set(DesktopPairState.error, 'Could not reach the phone: $e');
-      return false;
-    }
-  }
+          'Check the 6-digit code matches your phone, then tap Approve on the phone.');
 
-  /// Verify the typed code against our computed code and, on a match, fetch and
-  /// open the sealed payload from the phone.
-  Future<PairingPayload?> submitCode(String code) async {
-    if (_sid == null || _phonePubB64 == null || _keys == null ||
-        _host == null || _port == null) {
-      return null;
-    }
-    if (code.trim() != _expectedCode) {
-      _set(DesktopPairState.awaitingCode,
-          'Incorrect code — check your phone and try again.');
-      return null;
-    }
-    _set(DesktopPairState.verifying, 'Verifying…');
-    try {
-      final resp = await _postJson(_host!, _port!, '/pair/confirm', const {});
-      if (resp == null || resp['payload'] == null) {
-        _set(DesktopPairState.awaitingCode,
-            'Could not fetch pairing data — try again.');
-        return null;
-      }
-      final phonePub = Pairing.publicKeyFromB64(_phonePubB64!);
+      // Poll /pair/confirm until approved (200 payload), waiting (202), or we
+      // give up. ~120s window; the phone releases only after the human approves.
       final shared = await Pairing.deriveSharedKey(
         myKeyPair: _keys!.keyPair,
         peerPublicKey: phonePub,
         sid: _sid!,
       );
-      final payload = await Pairing.openPayload(
-          sharedKey: shared, blobB64: resp['payload'].toString());
-      _set(DesktopPairState.paired, 'Paired.');
-      return payload;
+      for (var i = 0; i < maxPolls; i++) {
+        if (_cancelled) {
+          _set(DesktopPairState.idle, null);
+          return null;
+        }
+        final resp = await _postJson(host, port, '/pair/confirm', const {});
+        if (resp != null && resp['payload'] != null) {
+          final payload = await Pairing.openPayload(
+              sharedKey: shared, blobB64: resp['payload'].toString());
+          _set(DesktopPairState.paired, 'Paired.');
+          return payload;
+        }
+        // 202 waiting / transient error → wait and poll again.
+        await Future<void>.delayed(pollInterval);
+      }
+      _set(DesktopPairState.error,
+          'Timed out waiting for approval on the phone. Try again.');
+      return null;
     } catch (e) {
-      _set(DesktopPairState.awaitingCode, 'Could not verify: $e');
+      _set(DesktopPairState.error, 'Pairing failed: $e');
       return null;
     }
   }

@@ -146,12 +146,16 @@ class _PairDesktopScreenState extends State<PairDesktopScreen> {
   }
 
   Widget _codeCard(NqePalette pal, String code) {
+    final approved = _server.pairingApproved;
     return _card(pal, [
       Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
           children: [
-            Text('Enter this code on your desktop',
+            Text(
+                approved
+                    ? 'Approved — finishing on your desktop…'
+                    : 'Does your desktop show this same code?',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: pal.textLo, fontSize: 14)),
             const SizedBox(height: 16),
@@ -172,10 +176,47 @@ class _PairDesktopScreenState extends State<PairDesktopScreen> {
                 ),
               ),
             ),
-            const SizedBox(height: 12),
-            Text('Keep this open until the desktop says “Paired”.',
+            const SizedBox(height: 18),
+            if (approved)
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2)),
+                  const SizedBox(width: 10),
+                  Text('Sending securely…',
+                      style: TextStyle(color: pal.textLo, fontSize: 12)),
+                ],
+              )
+            else ...[
+              Text(
+                'Only approve if the codes match — this authorises that desktop '
+                'to receive your data.',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: pal.textLo, fontSize: 12)),
+                style: TextStyle(color: pal.textLo, fontSize: 12, height: 1.4),
+              ),
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: _server.denyPairing,
+                      child: const Text('Not me'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: _server.approvePairing,
+                      icon: const Icon(Icons.check),
+                      label: const Text('Approve'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ],
         ),
       ),

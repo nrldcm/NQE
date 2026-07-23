@@ -644,8 +644,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 style: TextStyle(color: pal.textLo, fontSize: 12)),
             trailing: Icon(Icons.chevron_right, color: pal.textLo),
             onTap: () async {
+              // Fires the exemption dialog if not yet granted; if the user has
+              // dismissed it before, take them to the settings page instead.
+              final wasExempt = await isBatteryUnrestricted();
               await requestBackgroundPermissions();
-              await openBatterySettings();
+              if (!wasExempt && !await isBatteryUnrestricted()) {
+                await openBatterySettings();
+              }
             },
           ),
           if (running) ...[

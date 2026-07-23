@@ -1,9 +1,11 @@
-// End-to-end regression test for the desktop→phone pairing flow over HTTP.
+// End-to-end regression test for the desktop→phone pairing flow over HTTP,
+// including the SECURITY gate: the phone releases the sealed payload ONLY after
+// the human taps Approve on the phone. A LAN client that never gets an approval
+// must never obtain the secrets, no matter how many times it polls.
 //
 // It stands up a real HTTP server that mimics the phone's /pair/hello and
 // /pair/confirm endpoints (the same protocol lib/sync/sync_server.dart serves)
-// and drives the REAL desktop client (lib/sync/pairing_desktop.dart) against it,
-// asserting the connect → code → confirm handshake yields the sealed payload.
+// and drives the REAL desktop client (lib/sync/pairing_desktop.dart) against it.
 import 'dart:convert';
 
 import 'package:cryptography/cryptography.dart' show SecretKey;
@@ -14,26 +16,16 @@ import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 
 void main() {
-  // NOTE: do NOT initialize the Flutter widget test binding here — it installs
-  // HttpOverrides that make every HttpClient request return 400, which would
-  // stop the real client from reaching our mimic phone server below.
+  // Do NOT initialise the Flutter widget test binding — it installs
+  // HttpOverrides that make every HttpClient request return 400.
 
-  test('desktop connects, matches the code, and receives the sealed payload',
-      () async {
-    // --- phone side (mimics SyncServer's pairing responder) ---
+  // A tiny mimic of the phone's pairing responder. [approve] gates release.
+  Future<({int port, Future<void> Function() close, void Function() approve})>
+      startPhone(PairingPayload payload) async {
     final phoneKeys = await Pairing.generateKeys();
     final sid = phoneKeys.publicKeyB64.substring(0, 16);
-    const payload = PairingPayload(
-      syncHost: '192.168.1.71',
-      hosts: ['192.168.1.71', '100.90.80.70'],
-      syncPort: 8787,
-      syncKey: 'the-sync-key',
-      pinHash: 'aGFzaA',
-      pinSalt: 'c2FsdA',
-      pinLen: 6,
-      pinIterations: 100000,
-    );
     SecretKey? shared;
+    var approved = false;
 
     Future<Response> handler(Request req) async {
       const json = {'content-type': 'application/json'};
@@ -43,11 +35,16 @@ void main() {
         final desktopPub = Pairing.publicKeyFromB64(body['pub'].toString());
         shared = await Pairing.deriveSharedKey(
             myKeyPair: phoneKeys.keyPair, peerPublicKey: desktopPub, sid: sid);
+        approved = false;
         return Response.ok(
             jsonEncode({'sid': sid, 'phonePub': phoneKeys.publicKeyB64}),
             headers: json);
       }
       if (req.url.path == 'pair/confirm' && req.method == 'POST') {
+        if (!approved) {
+          return Response(202,
+              body: jsonEncode({'status': 'waiting'}), headers: json);
+        }
         final blob =
             await Pairing.sealPayload(sharedKey: shared!, payload: payload);
         return Response.ok(jsonEncode({'payload': blob}), headers: json);
@@ -56,31 +53,75 @@ void main() {
     }
 
     final server = await shelf_io.serve(handler, 'localhost', 0);
-    addTearDown(() => server.close(force: true));
+    return (
+      port: server.port,
+      close: () => server.close(force: true),
+      approve: () => approved = true,
+    );
+  }
 
-    // --- desktop side (the real client) ---
+  const payload = PairingPayload(
+    syncHost: '192.168.1.71',
+    hosts: ['192.168.1.71', '100.90.80.70'],
+    syncPort: 8787,
+    syncKey: 'the-sync-key',
+    pinHash: 'aGFzaA',
+    pinSalt: 'c2FsdA',
+    pinLen: 6,
+    pinIterations: 100000,
+  );
+
+  test('desktop pairs only AFTER the human approves on the phone', () async {
+    final phone = await startPhone(payload);
+    addTearDown(phone.close);
+
     final desktop = DesktopPairing();
-    final ok = await desktop.connect('localhost', server.port);
-    expect(ok, isTrue);
-    expect(desktop.state, DesktopPairState.awaitingCode);
-    expect(desktop.expectedCode, matches(RegExp(r'^\d{6}$')));
+    // Approve shortly after pairing starts (simulates the human tap).
+    Future<void>.delayed(const Duration(milliseconds: 150), phone.approve);
 
-    // Wrong code must be rejected without fetching the payload.
-    final bad = await desktop.submitCode('000000');
-    expect(bad, isNull);
-    expect(desktop.state, DesktopPairState.awaitingCode);
+    final result = await desktop
+        .pair('localhost', phone.port,
+            pollInterval: const Duration(milliseconds: 40), maxPolls: 100)
+        .timeout(const Duration(seconds: 15));
 
-    // Correct code (what the phone shows) → sealed payload opens.
-    final result = await desktop.submitCode(desktop.expectedCode!);
     expect(result, isNotNull);
     expect(result!.syncKey, 'the-sync-key');
     expect(result.allHosts, ['192.168.1.71', '100.90.80.70']);
     expect(result.hasPin, isTrue);
     expect(desktop.state, DesktopPairState.paired);
+    expect(desktop.code, matches(RegExp(r'^\d{6}$')));
   });
 
-  test('connecting to a phone that is not pairing surfaces a clear error',
+  test('without approval the phone never releases the payload (security gate)',
       () async {
+    final phone = await startPhone(payload);
+    addTearDown(phone.close);
+
+    // Never call phone.approve() → every /pair/confirm returns 202.
+    final desktop = DesktopPairing();
+    final result = await desktop
+        .pair('localhost', phone.port,
+            pollInterval: const Duration(milliseconds: 20), maxPolls: 8)
+        .timeout(const Duration(seconds: 15));
+
+    expect(result, isNull, reason: 'no approval → no secrets released');
+    expect(desktop.state, DesktopPairState.error);
+  });
+
+  test('cancel stops the approval poll promptly', () async {
+    final phone = await startPhone(payload);
+    addTearDown(phone.close);
+
+    final desktop = DesktopPairing();
+    final future = desktop.pair('localhost', phone.port,
+        pollInterval: const Duration(milliseconds: 40), maxPolls: 1000);
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    desktop.cancel();
+    final result = await future.timeout(const Duration(seconds: 5));
+    expect(result, isNull);
+  });
+
+  test('phone not in pairing mode → clear error, no hang', () async {
     Future<Response> handler(Request req) async {
       const json = {'content-type': 'application/json'};
       if (req.url.path == 'pair/hello') {
@@ -94,18 +135,19 @@ void main() {
     addTearDown(() => server.close(force: true));
 
     final desktop = DesktopPairing();
-    final ok = await desktop.connect('localhost', server.port);
-    expect(ok, isFalse);
+    final result = await desktop
+        .pair('localhost', server.port)
+        .timeout(const Duration(seconds: 15));
+    expect(result, isNull);
     expect(desktop.state, DesktopPairState.error);
   });
 
-  test('connecting to a dead address fails fast, never hangs', () async {
+  test('dead address fails fast, never hangs', () async {
     final desktop = DesktopPairing();
-    // Nothing is listening on this port → bounded HttpClient timeout, no hang.
-    final ok = await desktop
-        .connect('127.0.0.1', 59099)
+    final result = await desktop
+        .pair('127.0.0.1', 59099)
         .timeout(const Duration(seconds: 20));
-    expect(ok, isFalse);
+    expect(result, isNull);
     expect(desktop.state, DesktopPairState.error);
   });
 }

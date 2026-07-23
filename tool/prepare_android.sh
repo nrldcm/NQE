@@ -2,7 +2,8 @@
 # Regenerates the Android platform folder (not committed) and hardens it:
 #   * biometric-capable activity (FlutterFragmentActivity) + FLAG_SECURE
 #     (blocks screenshots and the app-switcher preview of financial data)
-#   * least-privilege permissions (biometric only; NO internet — app is offline)
+#   * scoped permissions: biometric, internet (live charts), LAN sync + a
+#     foreground service (dataSync) so the sync server survives screen-off
 #   * android:allowBackup="false" so the ledger DB / prefs can't be pulled via
 #     cloud auto-backup or `adb backup`
 #   * minSdk 23 (biometric prompt)
@@ -21,6 +22,15 @@ MANIFEST="$APP/src/main/AndroidManifest.xml"
 echo "==> Injecting permissions (biometric, internet, LAN-sync foreground service)"
 if ! grep -q "USE_BIOMETRIC" "$MANIFEST"; then
   perl -0pi -e 's/(<manifest[^>]*>)/$1\n    <uses-permission android:name="android.permission.USE_BIOMETRIC"\/>\n    <uses-permission android:name="android.permission.INTERNET"\/>\n    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"\/>\n    <uses-permission android:name="android.permission.WAKE_LOCK"\/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"\/>\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"\/>\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"\/>\n    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"\/>/s' "$MANIFEST"
+fi
+
+echo "==> Declaring the foreground service (dataSync) for background LAN sync"
+# flutter_foreground_task 8.x does NOT declare its service in the plugin
+# manifest — the app must, and Android 14+ requires an explicit
+# foregroundServiceType or startForegroundService throws. Without this the
+# background sync server dies when the screen locks.
+if ! grep -q "flutter_foreground_task.service.ForegroundService" "$MANIFEST"; then
+  perl -0pi -e 's/(<application\b[^>]*>)/$1\n        <service android:name="com.pravera.flutter_foreground_task.service.ForegroundService" android:foregroundServiceType="dataSync" android:exported="false" android:stopWithTask="false"\/>/s' "$MANIFEST"
 fi
 
 echo "==> Disabling backup (android:allowBackup=\"false\")"
@@ -77,6 +87,10 @@ grep -q "android.permission.INTERNET" "$MANIFEST" \
   || { echo "MISSING: INTERNET (needed for live charts)" >&2; fail=1; }
 grep -q "REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" "$MANIFEST" \
   || { echo "MISSING: REQUEST_IGNORE_BATTERY_OPTIMIZATIONS (background sync)" >&2; fail=1; }
+grep -q "flutter_foreground_task.service.ForegroundService" "$MANIFEST" \
+  || { echo "MISSING: ForegroundService declaration (background sync)" >&2; fail=1; }
+grep -q 'android:foregroundServiceType="dataSync"' "$MANIFEST" \
+  || { echo "MISSING: foregroundServiceType=dataSync (Android 14+)" >&2; fail=1; }
 if [ "$fail" -ne 0 ]; then
   echo "ERROR: Android hardening did not fully apply — failing the build." >&2
   exit 1

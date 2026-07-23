@@ -205,6 +205,7 @@ class SyncServer extends ChangeNotifier {
       );
     } catch (e) {
       _server = null;
+      _unbindAppState(); // don't leave the listener attached on a failed start
       status = SyncStatus.error;
       peer = PeerState.disconnected;
       lastError = 'Could not start sync server: $e';
@@ -266,6 +267,7 @@ class SyncServer extends ChangeNotifier {
   // over the sealed sync/PIN payload.
   bool pairingMode = false;
   bool pairingConnected = false; // a desktop is mid-handshake
+  bool pairingApproved = false; // the human tapped Approve on THIS phone
   String? pairingCode; // the 6-digit SAS to show on the phone
   PairingKeys? _pairKeys;
   String? _pairSid;
@@ -285,6 +287,7 @@ class SyncServer extends ChangeNotifier {
     _pairSid = pk.length >= 16 ? pk.substring(0, 16) : pk;
     pairingMode = true;
     pairingConnected = false;
+    pairingApproved = false;
     pairingCode = null;
     notifyListeners();
   }
@@ -293,9 +296,30 @@ class SyncServer extends ChangeNotifier {
   void stopPairing() {
     pairingMode = false;
     pairingConnected = false;
+    pairingApproved = false;
     pairingCode = null;
     _pairKeys = null;
     _pairSid = null;
+    _pairShared = null;
+    notifyListeners();
+  }
+
+  /// The human tapped Approve on THIS phone after confirming the desktop shows
+  /// the same 6-digit code. Only now may the sealed payload be released. This is
+  /// the security gate: without it any LAN client that completed the handshake
+  /// could fetch the sync key + PIN. The human comparison + this tap authorise
+  /// exactly one desktop.
+  void approvePairing() {
+    if (!pairingConnected) return;
+    pairingApproved = true;
+    notifyListeners();
+  }
+
+  /// Reject the current pairing attempt (codes didn't match / not me).
+  void denyPairing() {
+    pairingApproved = false;
+    pairingConnected = false;
+    pairingCode = null;
     _pairShared = null;
     notifyListeners();
   }
@@ -325,6 +349,7 @@ class SyncServer extends ChangeNotifier {
         phonePub: _pairKeys!.publicKey,
       );
       pairingConnected = true;
+      pairingApproved = false; // a new desktop must be re-approved by the human
       notifyListeners();
       return Response.ok(
         jsonEncode({'sid': _pairSid, 'phonePub': _pairKeys!.publicKeyB64}),
@@ -336,12 +361,21 @@ class SyncServer extends ChangeNotifier {
     }
   }
 
-  /// POST /pair/confirm  { }  →  { payload }  (sealed sync endpoint + PIN)
+  /// POST /pair/confirm  { }  →  202 {status:waiting} until the human taps
+  /// Approve on the phone, then 200 { payload } (sealed sync endpoint + PIN).
+  /// The approval gate is what authorises release — without it the desktop
+  /// polls and gets nothing, so a LAN client that never had the human's tap
+  /// can never obtain the secrets.
   Future<Response> _pairConfirm(Request request) async {
     final shared = _pairShared;
     if (shared == null) {
       return Response(409,
           body: jsonEncode({'error': 'no_session'}), headers: _jsonHeaders);
+    }
+    if (!pairingApproved) {
+      // Not yet approved by the human on this phone — tell the desktop to wait.
+      return Response(202,
+          body: jsonEncode({'status': 'waiting'}), headers: _jsonHeaders);
     }
     try {
       final payload = await buildPairingPayload();
@@ -350,6 +384,9 @@ class SyncServer extends ChangeNotifier {
             body: jsonEncode({'error': 'no_payload'}), headers: _jsonHeaders);
       }
       final blob = await Pairing.sealPayload(sharedKey: shared, payload: payload);
+      // Release exactly once: burn the session so it can't be re-fetched.
+      _pairShared = null;
+      pairingApproved = false;
       pairingConnected = false;
       pairingCode = null;
       notifyListeners();
@@ -494,8 +531,9 @@ class SyncServer extends ChangeNotifier {
   void _startPushTimer() {
     _pushTimer ??= Timer.periodic(_pushInterval, (_) {
       // Fire-and-forget; the async body swallows its own errors so the timer
-      // never propagates an exception.
-      unawaited(_pushToPeers());
+      // never propagates an exception. Force a resend so a rare snapshot-hash
+      // collision (which would skip the event-driven push) still converges.
+      unawaited(_pushToPeers(force: true));
     });
   }
 

@@ -90,7 +90,11 @@ class _DesktopBootstrapState extends State<_DesktopBootstrap> {
           await AuthService.instance.lockEnabled() &&
           await AuthService.instance.hasUsableFactor();
     } catch (_) {
-      locked = false;
+      // Fail CLOSED: if we can't verify the lock on a paired desktop, require
+      // an unlock rather than exposing the ledger. (A paired desktop that has a
+      // lock configured always has the mirrored PIN, so this can't lock the
+      // user out; an unpaired desktop goes to pairing, never here.)
+      locked = paired;
     }
 
     if (!mounted) return;

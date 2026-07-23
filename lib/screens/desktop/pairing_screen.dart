@@ -24,10 +24,8 @@ class DesktopPairingScreen extends StatefulWidget {
 class _DesktopPairingScreenState extends State<DesktopPairingScreen> {
   final _pairing = DesktopPairing();
   final _ipCtrl = TextEditingController();
-  final _codeCtrl = TextEditingController();
   int _port = 8787;
   bool _manual = false;
-  bool _busy = false;
 
   @override
   void initState() {
@@ -42,58 +40,43 @@ class _DesktopPairingScreenState extends State<DesktopPairingScreen> {
 
   @override
   void dispose() {
+    _pairing.cancel();
     _pairing.removeListener(_onChange);
     _pairing.dispose();
     _ipCtrl.dispose();
-    _codeCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _scan() async {
+    _pairing.cancel();
     final hits = await _pairing.discover(_port);
     if (!mounted) return;
     // Exactly one phone → connect straight away (no tapping needed).
     if (hits.length == 1) _connect(hits.first);
   }
 
+  // Connect + wait for the human to Approve on the phone, then finalise.
   Future<void> _connect(String host) async {
     if (host.trim().isEmpty) return;
-    await _pairing.connect(host.trim(), _port);
-  }
-
-  Future<void> _verify() async {
-    final code = _codeCtrl.text.trim();
-    if (code.length != 6) {
-      _snack('Enter the 6-digit code shown on your phone.');
-      return;
-    }
-    setState(() => _busy = true);
-    try {
-      final payload = await _pairing.submitCode(code);
-      if (payload == null) {
-        _snack(_pairing.message ?? 'Incorrect code.');
-        return;
-      }
-      if (payload.hasPin) {
-        await AuthService.instance.importPinCredential(
-          hash: payload.pinHash!,
-          salt: payload.pinSalt!,
-          len: payload.pinLen,
-        );
-      }
-      await SyncClient.instance.setTargets(
-        hosts: payload.allHosts,
-        port: payload.syncPort,
-        key: payload.syncKey,
+    final payload = await _pairing.pair(host.trim(), _port);
+    if (payload == null) return; // state/message already reflects the failure
+    if (payload.hasPin) {
+      await AuthService.instance.importPinCredential(
+        hash: payload.pinHash!,
+        salt: payload.pinSalt!,
+        len: payload.pinLen,
       );
-      try {
-        await appState.load();
-      } catch (_) {/* non-fatal */}
-      if (!mounted) return;
-      widget.onPaired();
-    } finally {
-      if (mounted) setState(() => _busy = false);
     }
+    await SyncClient.instance.setTargets(
+      hosts: payload.allHosts,
+      port: payload.syncPort,
+      key: payload.syncKey,
+    );
+    try {
+      await appState.load();
+    } catch (_) {/* non-fatal */}
+    if (!mounted) return;
+    widget.onPaired();
   }
 
   Future<void> _showPortDialog() async {
@@ -137,11 +120,6 @@ class _DesktopPairingScreenState extends State<DesktopPairingScreen> {
     if (res == null) return;
     setState(() => _port = sanitizePort(res, fallback: 8787));
     _scan();
-  }
-
-  void _snack(String m) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
   }
 
   @override
@@ -301,9 +279,11 @@ class _DesktopPairingScreenState extends State<DesktopPairingScreen> {
     );
   }
 
+  // Display-only: show the code and wait for the human to Approve on the phone.
   Widget _codeCard(NqePalette pal) {
+    final code = _pairing.code ?? '------';
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: pal.surface,
         borderRadius: BorderRadius.circular(16),
@@ -311,49 +291,48 @@ class _DesktopPairingScreenState extends State<DesktopPairingScreen> {
       ),
       child: Column(
         children: [
-          Text('Enter the 6-digit code shown on your phone',
+          Text('Check this matches your phone, then tap Approve on the phone',
               textAlign: TextAlign.center,
               style: TextStyle(color: pal.textLo, fontSize: 13)),
-          const SizedBox(height: 14),
-          TextField(
-            controller: _codeCtrl,
-            enabled: !_busy,
-            autofocus: true,
-            keyboardType: TextInputType.number,
-            textAlign: TextAlign.center,
-            maxLength: 6,
-            style: TextStyle(
-              color: pal.textHi,
-              fontSize: 30,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 12,
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+            decoration: BoxDecoration(
+              color: pal.bg,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: pal.line),
             ),
-            inputFormatters: [
-              FilteringTextInputFormatter.digitsOnly,
-              LengthLimitingTextInputFormatter(6),
-            ],
-            decoration:
-                const InputDecoration(counterText: '', hintText: '••••••'),
-            onSubmitted: (_) => _verify(),
+            child: Text(
+              code,
+              style: TextStyle(
+                color: pal.textHi,
+                fontSize: 40,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 12,
+              ),
+            ),
           ),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton(
-              onPressed: _busy ? null : _verify,
-              child: _busy
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Text('Pair'),
-            ),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2)),
+              const SizedBox(width: 10),
+              Text('Waiting for you to Approve on the phone…',
+                  style: TextStyle(color: pal.textLo, fontSize: 12)),
+            ],
           ),
           const SizedBox(height: 6),
           TextButton.icon(
-            onPressed: _busy ? null : _scan,
+            onPressed: () {
+              _pairing.cancel();
+              _scan();
+            },
             icon: const Icon(Icons.arrow_back, size: 18),
-            label: const Text('Back / find another device'),
+            label: const Text('Cancel / find another device'),
           ),
         ],
       ),

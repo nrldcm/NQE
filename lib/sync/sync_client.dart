@@ -163,6 +163,7 @@ class SyncClient extends ChangeNotifier {
   /// Open the connection using the current (paired/loaded) URI. Resets the
   /// attempt counter — this is a fresh connect, not a backoff retry.
   Future<void> connect() async {
+    _retryTimer?.cancel(); // don't let a stale backoff timer tear down the new link
     attempt = 0;
     _manuallyClosed = false;
     await _open();
@@ -282,7 +283,8 @@ class SyncClient extends ChangeNotifier {
 
   void _startPushTimer() {
     _pushTimer?.cancel();
-    _pushTimer = Timer.periodic(_pushInterval, (_) => _pushSnapshot());
+    // Force so a rare snapshot-hash collision still converges via the fallback.
+    _pushTimer = Timer.periodic(_pushInterval, (_) => _pushSnapshot(force: true));
     _bindAppState();
   }
 
