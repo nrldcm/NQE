@@ -339,4 +339,31 @@ void main() {
     expect(e.rejected, isFalse);
     expect(p.positions, isEmpty);
   });
+
+  test('a USD-quoted instrument settles in the PHP base currency via fx', () {
+    // PHP account; buy a USD-quoted crypto with a 57 PHP/USD rate.
+    final p = SimPortfolio(
+      account: SimAccount(
+        id: 'acc',
+        name: 'Sandbox',
+        currency: 'PHP',
+        startingCash: 1000000,
+        maxLeverage: 10,
+        createdAtMs: 0,
+        updatedAtMs: 0,
+      ),
+    );
+    double fx(String s) => 57.0; // USD → PHP
+    final e = SimEngine.placeOrder(p, mkt('BTCUSDT', OrderSide.buy, 1),
+        priceOf: priced({'BTCUSDT': 100}), nowMs: now(), uid: uid, fxOf: fx);
+    expect(e.rejected, isFalse);
+    // cost in PHP = 1*100*57 = 5700; fee = 100*0.001*57 = 5.7 → cash 994294.3
+    expect(p.account.cash, closeTo(1000000 - 5700 - 5.7, 1e-6));
+    // Equity right after = start − fee (in PHP).
+    expect(SimEngine.equity(p, priced({'BTCUSDT': 100}), fxOf: fx),
+        closeTo(1000000 - 5.7, 1e-6));
+    // Price +10 USD → unrealized = 10*1*57 = +570 PHP.
+    expect(SimEngine.unrealized(p, priced({'BTCUSDT': 110}), fxOf: fx),
+        closeTo(570, 1e-6));
+  });
 }

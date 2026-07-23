@@ -80,7 +80,9 @@ class _PositionTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final pal = context.nqe;
     final price = simState.priceOf(pos.symbol);
-    final pnl = pos.unrealizedPnl(price);
+    // Convert the P/L into the account base currency (e.g. USD-quoted crypto
+    // → PHP); ROI is currency-independent.
+    final pnl = pos.unrealizedPnl(price) * simState.fxOf(pos.symbol);
     final roi = pos.roiPct(price);
     final long = pos.side == PositionSide.long;
     final sideColor = long ? NqeColors.gain : NqeColors.loss;
@@ -125,7 +127,7 @@ class _PositionTile extends StatelessWidget {
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      Text(simSignedMoney(pnl),
+                      Text(simSignedMoney(pnl, currency: simState.currency),
                           style: TextStyle(
                               color: NqeColors.pnl(pnl),
                               fontWeight: FontWeight.w800,

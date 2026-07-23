@@ -55,18 +55,23 @@ class _SandboxTradeTicketState extends State<SandboxTradeTicket> {
 
   double get _lev => _mode == TradeMode.margin ? _leverage : 1.0;
 
+  /// FX multiplier from the instrument's quote currency to the account base.
+  double get _fx => simState.fxOf(widget.symbol);
+
   double get _buyingPower {
-    final cash = simState.freeCash;
+    final cash = simState.freeCash; // base currency
     return _mode == TradeMode.margin ? cash * _leverage : cash;
   }
 
   double _maxQty(double price) {
     if (price <= 0) return 0;
     final fee = SimEngine.feeRate(_market);
+    final pxBase = price * _fx; // price in the account base currency
+    if (pxBase <= 0) return 0;
     if (_mode == TradeMode.spot) {
-      return simState.freeCash / (price * (1 + fee));
+      return simState.freeCash / (pxBase * (1 + fee));
     }
-    return simState.freeCash / (price / _leverage + price * fee);
+    return simState.freeCash / (pxBase / _leverage + pxBase * fee);
   }
 
   void _setQtyPct(double pct) {
@@ -174,10 +179,13 @@ class _SandboxTradeTicketState extends State<SandboxTradeTicket> {
     final pal = context.nqe;
     final buy = _side == OrderSide.buy;
     final accent = buy ? NqeColors.gain : NqeColors.loss;
+    final cur = simState.currency;
+    final fx = _fx;
     final price = _refPrice;
-    final notional = _qty * (price > 0 ? price : _last);
-    final fee = notional * SimEngine.feeRate(_market);
-    final cost = _mode == TradeMode.margin ? notional / _lev + fee : notional + fee;
+    final notional = _qty * (price > 0 ? price : _last); // native quote ccy
+    final feeBase = notional * SimEngine.feeRate(_market) * fx;
+    final costBase =
+        (_mode == TradeMode.margin ? notional / _lev : notional) * fx + feeBase;
 
     return SimCard(
       padding: const EdgeInsets.all(16),
@@ -344,10 +352,10 @@ class _SandboxTradeTicketState extends State<SandboxTradeTicket> {
           ],
 
           const SizedBox(height: 6),
-          _kv('Buying power', simMoney(_buyingPower)),
+          _kv('Buying power', simMoney(_buyingPower, currency: cur)),
           _kv(_mode == TradeMode.margin ? 'Est. collateral + fee' : 'Est. cost',
-              simMoney(cost)),
-          _kv('Est. fee', simMoney(fee)),
+              simMoney(costBase, currency: cur)),
+          _kv('Est. fee', simMoney(feeBase, currency: cur)),
           if (_liqPreview != null)
             _kv('Est. liquidation', fmtPrice(_liqPreview!, _market),
                 color: NqeColors.loss),

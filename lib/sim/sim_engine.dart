@@ -54,27 +54,37 @@ class SimEngine {
         SimMarket.crypto => 0.001,
       };
 
+  /// Identity FX — used when no converter is supplied (single-currency).
+  static double _one(String _) => 1.0;
+
   // ---- valuation -----------------------------------------------------------
 
   /// Total account value = free cash + spot holdings at market + (for margin)
-  /// locked collateral + unrealized P/L.
-  static double equity(SimPortfolio p, double Function(String) priceOf) {
+  /// locked collateral + unrealized P/L. All position values are converted to
+  /// the account's base currency via [fxOf] (multiplier from the instrument's
+  /// quote currency to base); collateral is already stored in base.
+  static double equity(SimPortfolio p, double Function(String) priceOf,
+      {double Function(String)? fxOf}) {
+    final fx = fxOf ?? _one;
     var eq = p.account.cash;
     for (final pos in p.positions) {
       final px = priceOf(pos.symbol);
+      final f = fx(pos.symbol);
       if (pos.mode == TradeMode.spot) {
-        eq += pos.notional(px);
+        eq += pos.notional(px) * f;
       } else {
-        eq += pos.marginUsed + pos.unrealizedPnl(px);
+        eq += pos.marginUsed + pos.unrealizedPnl(px) * f;
       }
     }
     return eq;
   }
 
-  static double unrealized(SimPortfolio p, double Function(String) priceOf) {
+  static double unrealized(SimPortfolio p, double Function(String) priceOf,
+      {double Function(String)? fxOf}) {
+    final fx = fxOf ?? _one;
     var u = 0.0;
     for (final pos in p.positions) {
-      u += pos.unrealizedPnl(priceOf(pos.symbol));
+      u += pos.unrealizedPnl(priceOf(pos.symbol)) * fx(pos.symbol);
     }
     return u;
   }
@@ -94,7 +104,9 @@ class SimEngine {
     required int nowMs,
     required String Function() uid,
     double slippage = 0,
+    double Function(String)? fxOf,
   }) {
+    final fx = fxOf ?? _one;
     if (!(order.qty > 0) || !order.qty.isFinite) {
       return const SimEffect(rejectReason: 'Quantity must be greater than 0.');
     }
@@ -129,9 +141,9 @@ class SimEngine {
       if (!(px > 0)) {
         return const SimEffect(rejectReason: 'No price available for this symbol.');
       }
-      final afford = _affordCheck(p, order, px);
+      final afford = _affordCheck(p, order, px, fx);
       if (afford != null) return SimEffect(rejectReason: afford);
-      final t = _applyFill(p, order, px, nowMs: nowMs, uid: uid);
+      final t = _applyFill(p, order, px, nowMs: nowMs, uid: uid, fx: fx);
       order.status = OrderStatus.filled;
       order.fillPrice = px;
       order.filledAtMs = nowMs;
@@ -140,7 +152,7 @@ class SimEngine {
 
     // Pending order — validate affordability against its own limit/stop price.
     final ref = order.limitPrice ?? order.stopPrice ?? priceOf(order.symbol);
-    final afford = _affordCheck(p, order, ref);
+    final afford = _affordCheck(p, order, ref, fx);
     if (afford != null) return SimEffect(rejectReason: afford);
     order.status = OrderStatus.open;
     p.orders.add(order);
@@ -155,7 +167,9 @@ class SimEngine {
     required int nowMs,
     required String Function() uid,
     double slippage = 0,
+    double Function(String)? fxOf,
   }) {
+    final fx = fxOf ?? _one;
     final trades = <SimTrade>[];
     final filled = <SimOrder>[];
     final closed = <String>[];
@@ -185,14 +199,14 @@ class SimEngine {
             o.type == OrderType.limit ? (o.limitPrice ?? mkt) : mkt,
             o.side,
             slippage);
-        final afford = _affordCheck(p, o, px);
+        final afford = _affordCheck(p, o, px, fx);
         if (afford != null) {
           o.status = OrderStatus.rejected;
           p.orders.remove(o);
           removed.add(o.id);
           continue;
         }
-        final r = _applyFill(p, o, px, nowMs: nowMs, uid: uid);
+        final r = _applyFill(p, o, px, nowMs: nowMs, uid: uid, fx: fx);
         o.status = OrderStatus.filled;
         o.fillPrice = px;
         o.filledAtMs = nowMs;
@@ -226,7 +240,7 @@ class SimEngine {
           reduceOnly: true,
           createdAtMs: nowMs,
         );
-        final r = _applyFill(p, closeOrder, liq, nowMs: nowMs, uid: uid);
+        final r = _applyFill(p, closeOrder, liq, nowMs: nowMs, uid: uid, fx: fx);
         trades.add(r.trade);
         closed.addAll(r.closedIds);
         liquidated.add(pos.symbol);
@@ -303,10 +317,14 @@ class SimEngine {
     return null;
   }
 
-  /// Affordability / margin check. Returns a reason string if rejected, else null.
-  static String? _affordCheck(SimPortfolio p, SimOrder o, double price) {
+  /// Affordability / margin check. Returns a reason string if rejected, else
+  /// null. [fx] converts the instrument's quote currency to the account's base
+  /// currency, so all comparisons happen in base (e.g. PHP).
+  static String? _affordCheck(
+      SimPortfolio p, SimOrder o, double price, double Function(String) fx) {
     if (!(price > 0)) return 'No price available.';
-    final fee = o.qty * price * feeRate(o.market);
+    final f = fx(o.symbol);
+    final fee = o.qty * price * feeRate(o.market) * f;
     final net = _netQty(p, o.symbol, o.mode);
     final incoming = o.side == OrderSide.buy ? o.qty : -o.qty;
     // Only the portion that INCREASES exposure needs new funds; reducing frees.
@@ -315,12 +333,12 @@ class SimEngine {
         : max(0.0, o.qty - net.abs());
     if (increasing <= 0) return null; // pure reduce/close — always allowed
     if (o.mode == TradeMode.spot) {
-      final need = increasing * price + fee;
+      final need = increasing * price * f + fee;
       if (need > p.account.cash + 1e-6) {
         return 'Not enough cash (need ${need.toStringAsFixed(2)}).';
       }
     } else {
-      final collateral = increasing * price / o.leverage;
+      final collateral = increasing * price * f / o.leverage;
       if (collateral + fee > p.account.cash + 1e-6) {
         return 'Not enough margin (need ${(collateral + fee).toStringAsFixed(2)} collateral).';
       }
@@ -334,8 +352,13 @@ class SimEngine {
     double price, {
     required int nowMs,
     required String Function() uid,
+    double Function(String)? fx,
   }) {
-    final fee = o.qty * price * feeRate(o.market);
+    // All cash movements, collateral and realized P/L are kept in the account's
+    // base currency: multiply quote-currency amounts by [f]. avgPrice/qty stay
+    // in the instrument's native quote units.
+    final f = (fx ?? _one)(o.symbol);
+    final fee = o.qty * price * feeRate(o.market) * f;
     final closedIds = <String>[];
     var realized = 0.0;
 
@@ -348,7 +371,7 @@ class SimEngine {
     if (o.mode == TradeMode.spot) {
       // Spot: net >= 0 always. Buy adds, sell reduces.
       if (o.side == OrderSide.buy) {
-        p.account.cash -= o.qty * price + fee;
+        p.account.cash -= o.qty * price * f + fee;
         if (pos == null) {
           pos = SimPosition(
             id: uid(),
@@ -372,8 +395,8 @@ class SimEngine {
       } else {
         // sell (reduce long)
         final sellQty = min(o.qty, pos?.qty ?? 0);
-        realized = (price - (pos?.avgPrice ?? price)) * sellQty;
-        p.account.cash += sellQty * price - fee;
+        realized = (price - (pos?.avgPrice ?? price)) * sellQty * f;
+        p.account.cash += sellQty * price * f - fee;
         p.account.realizedPnl += realized;
         if (pos != null) {
           pos.qty -= sellQty;
@@ -389,8 +412,8 @@ class SimEngine {
       final incSign = incoming.sign;
       final oldSign = oldNet.sign;
       if (oldNet == 0 || incSign == oldSign) {
-        // Opening or increasing in the same direction.
-        final addCollateral = o.qty * price / o.leverage;
+        // Opening or increasing in the same direction. Collateral in base ccy.
+        final addCollateral = o.qty * price * f / o.leverage;
         p.account.cash -= addCollateral + fee;
         if (pos == null) {
           pos = SimPosition(
@@ -419,7 +442,8 @@ class SimEngine {
         // Reducing / closing / flipping.
         final reduceQty = min(o.qty, oldNet.abs());
         final dir = oldSign; // +1 long, -1 short
-        realized = (price - (pos?.avgPrice ?? price)) * reduceQty * dir;
+        realized = (price - (pos?.avgPrice ?? price)) * reduceQty * dir * f;
+        // marginUsed is already stored in base currency.
         final released = (pos != null && pos.qty > 0)
             ? pos.marginUsed * (reduceQty / pos.qty)
             : 0.0;
@@ -437,7 +461,7 @@ class SimEngine {
         // Flip: leftover opens a new position the other way.
         final leftover = o.qty - reduceQty;
         if (leftover > 1e-9) {
-          final addCollateral = leftover * price / o.leverage;
+          final addCollateral = leftover * price * f / o.leverage;
           p.account.cash -= addCollateral; // fee already charged above
           final np = SimPosition(
             id: uid(),

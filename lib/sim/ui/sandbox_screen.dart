@@ -12,7 +12,7 @@ import '../sim_models.dart';
 import '../sim_market.dart';
 import '../sim_state.dart';
 import 'sandbox_analytics_panel.dart';
-import 'sandbox_chart.dart';
+import 'sandbox_candle_chart.dart';
 import 'sandbox_common.dart';
 import 'sandbox_market_panel.dart';
 import 'sandbox_notices.dart';
@@ -29,7 +29,6 @@ class SandboxScreen extends StatefulWidget {
 class _SandboxScreenState extends State<SandboxScreen>
     with SingleTickerProviderStateMixin {
   String _symbol = 'BTCUSDT';
-  final Map<String, List<double>> _history = {};
   SimNotice? _shownNotice;
   TabController? _tabs;
 
@@ -55,16 +54,10 @@ class _SandboxScreenState extends State<SandboxScreen>
   }
 
   void _onTick() {
-    // Append the newest price for the selected symbol to its rolling window.
-    // No setState here — the top-level ListenableBuilder(simState) already
-    // rebuilds this screen on the same notification (and runs after this
-    // listener, so it reads the freshly-appended point). One rebuild per tick.
-    final px = simState.priceOf(_symbol);
-    final buf = _history.putIfAbsent(_symbol, () => <double>[]);
-    if (buf.isEmpty || buf.last != px) {
-      buf.add(px);
-      if (buf.length > 160) buf.removeRange(0, buf.length - 160);
-    }
+    // The candle chart advances itself from simState on each tick; here we only
+    // surface any new trade notification. No setState — the top-level
+    // ListenableBuilder(simState) already rebuilds this screen on the same
+    // notification. One rebuild per tick.
     _maybeFlashNotice();
   }
 
@@ -190,9 +183,9 @@ class _SandboxScreenState extends State<SandboxScreen>
         _SymbolBar(symbol: _symbol, market: _market),
         const SizedBox(height: 10),
         SimCard(
-          padding: const EdgeInsets.fromLTRB(6, 10, 10, 6),
-          child: SandboxChart(
-              history: _history[_symbol] ?? const [], market: _market),
+          padding: const EdgeInsets.fromLTRB(10, 10, 10, 8),
+          child: SandboxCandleChart(
+              symbol: _symbol, market: _market, height: 220),
         ),
         const SizedBox(height: 12),
         SandboxTradeTicket(symbol: _symbol),
@@ -231,11 +224,9 @@ class _SandboxScreenState extends State<SandboxScreen>
                       _SymbolBar(symbol: _symbol, market: _market),
                       const SizedBox(height: 12),
                       SimCard(
-                        padding: const EdgeInsets.fromLTRB(6, 12, 12, 6),
-                        child: SandboxChart(
-                            history: _history[_symbol] ?? const [],
-                            market: _market,
-                            height: 260),
+                        padding: const EdgeInsets.fromLTRB(10, 12, 12, 8),
+                        child: SandboxCandleChart(
+                            symbol: _symbol, market: _market, height: 300),
                       ),
                       const SizedBox(height: 12),
                       Expanded(
@@ -282,6 +273,7 @@ class _Header extends StatelessWidget {
     final equity = simState.equity;
     final unreal = simState.unrealized;
     final cash = simState.freeCash;
+    final cur = simState.currency;
     final live = simState.price.mode == FeedMode.live;
 
     return Container(
@@ -374,10 +366,12 @@ class _Header extends StatelessWidget {
           const SizedBox(height: 6),
           Row(
             children: [
-              _metric(context, 'Equity', simMoney(equity), pal.textHi),
-              _metric(context, 'Unrealized P/L', simSignedMoney(unreal),
-                  NqeColors.pnl(unreal)),
-              _metric(context, 'Free cash', simMoney(cash), pal.textHi),
+              _metric(context, 'Equity', simMoney(equity, currency: cur),
+                  pal.textHi),
+              _metric(context, 'Unrealized P/L',
+                  simSignedMoney(unreal, currency: cur), NqeColors.pnl(unreal)),
+              _metric(context, 'Free cash', simMoney(cash, currency: cur),
+                  pal.textHi),
             ],
           ),
         ],

@@ -130,10 +130,12 @@ class SimPosition {
     return (price - avgPrice) * qty * dir;
   }
 
-  /// Return on the collateral actually put up (leverage-aware).
+  /// Return on the collateral actually put up (leverage-aware). Computed from
+  /// native quote-currency quantities so it's independent of FX conversion
+  /// (marginUsed may be stored in a different base currency).
   double roiPct(double price) {
-    final basis = mode == TradeMode.margin && marginUsed > 0
-        ? marginUsed
+    final basis = mode == TradeMode.margin && leverage > 0
+        ? costBasis / leverage
         : costBasis;
     if (basis == 0) return 0;
     return unrealizedPnl(price) / basis * 100;

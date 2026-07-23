@@ -45,6 +45,26 @@ SimSymbol? instrumentFor(String symbol) {
 
 double seedPriceFor(String symbol) => instrumentFor(symbol)?.seedPrice ?? 100.0;
 
+/// PSE-listed tickers — quoted in Philippine pesos.
+const Set<String> kPseTickers = {
+  'SM', 'BDO', 'BPI', 'ALI', 'AC', 'JFC', 'SMPH', 'TEL', 'GLO', 'MER',
+  'ICT', 'URC', 'AEV', 'ACEN', 'BLOOM', 'CNVRG', 'MONDE', 'SPNEC',
+};
+
+/// The currency an instrument is priced in:
+///   * PSE stocks → PHP
+///   * Forex pairs → the pair's quote (last 3 letters, e.g. USDJPY → JPY)
+///   * US stocks + crypto (USDT pairs) → USD
+String quoteCurrencyFor(String symbol) {
+  final up = symbol.toUpperCase();
+  if (kPseTickers.contains(up)) return 'PHP';
+  final inst = instrumentFor(up);
+  if (inst?.market == SimMarket.forex && up.length == 6) {
+    return up.substring(3);
+  }
+  return 'USD';
+}
+
 const List<SimSymbol> kInstruments = [
   // ---- PSE stocks (prices in PHP, indicative) ----
   SimSymbol('SM', 'SM Investments', SimMarket.stocks, 900),

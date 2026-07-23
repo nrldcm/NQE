@@ -5,6 +5,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../util.dart';
+import 'sim_candles.dart';
 import 'sim_db.dart';
 import 'sim_engine.dart';
 import 'sim_market.dart';
@@ -26,6 +27,7 @@ class SimNotice {
 
 class SimState extends ChangeNotifier {
   final PriceEngine price = PriceEngine();
+  final CandleStore candles = CandleStore();
   final SimDb _db = SimDb.instance;
 
   bool loading = true;
@@ -46,10 +48,61 @@ class SimState extends ChangeNotifier {
   double priceOf(String symbol) =>
       price.price(symbol) ?? seedPriceFor(symbol);
 
-  double get equity => _pf == null ? 0 : SimEngine.equity(_pf!, priceOf);
+  /// Account base currency (Sandbox trades in Philippine pesos, since it lists
+  /// the PSE alongside global markets).
+  String get currency => _pf?.account.currency ?? 'PHP';
+
+  double get equity =>
+      _pf == null ? 0 : SimEngine.equity(_pf!, priceOf, fxOf: fxOf);
   double get unrealized =>
-      _pf == null ? 0 : SimEngine.unrealized(_pf!, priceOf);
+      _pf == null ? 0 : SimEngine.unrealized(_pf!, priceOf, fxOf: fxOf);
   double get freeCash => _pf?.account.cash ?? 0;
+
+  /// FX multiplier from an instrument's quote currency to the account base
+  /// (e.g. a US/crypto symbol quoted in USD → PHP). Rates are read live from
+  /// the forex feed, so amounts auto-convert as USDPHP moves.
+  double fxOf(String symbol) {
+    final base = _pf?.account.currency ?? 'PHP';
+    final quote = quoteCurrencyFor(symbol);
+    if (quote == base) return 1.0;
+    final a = _fxToUsd(quote);
+    final b = _fxToUsd(base);
+    if (!(a > 0) || !(b > 0)) return 1.0;
+    final m = a / b;
+    return (m.isFinite && m > 0) ? m : 1.0;
+  }
+
+  double _pxOr(String sym, double fallback) {
+    final p = price.price(sym);
+    return (p != null && p.isFinite && p > 0) ? p : fallback;
+  }
+
+  /// Value of one unit of [ccy] in USD (pivot currency), derived from the
+  /// forex pairs already in the feed.
+  double _fxToUsd(String ccy) {
+    switch (ccy) {
+      case 'USD':
+        return 1.0;
+      case 'EUR':
+        return _pxOr('EURUSD', 1.08);
+      case 'GBP':
+        return _pxOr('GBPUSD', 1.27);
+      case 'AUD':
+        return _pxOr('AUDUSD', 0.66);
+      case 'NZD':
+        return _pxOr('NZDUSD', 0.61);
+      case 'JPY':
+        return 1 / _pxOr('USDJPY', 150);
+      case 'CAD':
+        return 1 / _pxOr('USDCAD', 1.36);
+      case 'CHF':
+        return 1 / _pxOr('USDCHF', 0.88);
+      case 'PHP':
+        return 1 / _pxOr('USDPHP', 57);
+      default:
+        return 1.0;
+    }
+  }
 
   // ---- lifecycle -----------------------------------------------------------
 
@@ -69,8 +122,8 @@ class SimState extends ChangeNotifier {
       final a = SimAccount(
         id: uid(),
         name: 'Sandbox',
-        currency: 'USD',
-        startingCash: 100000,
+        currency: 'PHP', // pesos — the Sandbox lists the PSE alongside FX/crypto
+        startingCash: 1000000, // ₱1,000,000 virtual starting balance
         createdAtMs: _now(),
         updatedAtMs: _now(),
       );
@@ -84,9 +137,11 @@ class SimState extends ChangeNotifier {
     trades = await _db.trades(acc.id);
     watch = await _db.watch(acc.id);
 
-    // Seed prices for everything we care about + a few defaults.
+    // Seed prices for everything we care about + the FX pairs used to convert
+    // USD-quoted instruments into the peso base currency.
     final syms = <String>{
       'BTCUSDT', 'ETHUSDT', 'AAPL', 'EURUSD', 'XAUUSD',
+      'USDPHP', 'USDJPY', 'USDCAD', 'USDCHF', 'GBPUSD', 'AUDUSD', 'NZDUSD',
       ...pos.map((e) => e.symbol),
       ...ord.map((e) => e.symbol),
       ...watch.map((e) => e.symbol),
@@ -101,7 +156,7 @@ class SimState extends ChangeNotifier {
     final pf = _pf;
     if (pf == null) return;
     final effect = SimEngine.onTick(pf,
-        priceOf: priceOf, nowMs: _now(), uid: uid);
+        priceOf: priceOf, nowMs: _now(), uid: uid, fxOf: fxOf);
     if (effect.trades.isNotEmpty ||
         effect.filledOrders.isNotEmpty ||
         effect.liquidatedSymbols.isNotEmpty ||
@@ -121,7 +176,7 @@ class SimState extends ChangeNotifier {
     if (pf == null) return 'No sandbox account.';
     price.subscribe(order.symbol);
     final e = SimEngine.placeOrder(pf, order,
-        priceOf: priceOf, nowMs: _now(), uid: uid);
+        priceOf: priceOf, nowMs: _now(), uid: uid, fxOf: fxOf);
     if (e.rejected) return e.rejectReason;
     await _persist(e);
     _noticeForEffect(e, placed: true);

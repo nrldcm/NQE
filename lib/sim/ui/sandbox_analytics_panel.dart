@@ -26,6 +26,7 @@ class SandboxAnalyticsPanel extends StatelessWidget {
         final equity = simState.equity;
         final start = acc?.startingCash ?? 0;
         final totalRet = start == 0 ? 0.0 : (equity - start) / start * 100;
+        final cur = simState.currency;
 
         return ListView(
           padding: const EdgeInsets.only(bottom: 24),
@@ -41,7 +42,7 @@ class SandboxAnalyticsPanel extends StatelessWidget {
               children: [
                 StatCard(
                     label: 'Equity',
-                    value: simMoney(equity),
+                    value: simMoney(equity, currency: cur),
                     icon: Icons.account_balance_wallet_outlined),
                 StatCard(
                   label: 'Total return',
@@ -51,7 +52,7 @@ class SandboxAnalyticsPanel extends StatelessWidget {
                 ),
                 StatCard(
                   label: 'Realized P/L',
-                  value: simSignedMoney(acc?.realizedPnl ?? 0),
+                  value: simSignedMoney(acc?.realizedPnl ?? 0, currency: cur),
                   valueColor: NqeColors.pnl(acc?.realizedPnl ?? 0),
                   icon: Icons.paid_outlined,
                 ),
@@ -63,7 +64,7 @@ class SandboxAnalyticsPanel extends StatelessWidget {
                 ),
                 StatCard(
                     label: 'Fees paid',
-                    value: simMoney(fees),
+                    value: simMoney(fees, currency: cur),
                     icon: Icons.receipt_outlined),
                 StatCard(
                     label: 'Total trades',
@@ -145,7 +146,7 @@ class _TradeRow extends StatelessWidget {
               ),
             ),
             if (t.realizedPnl != 0)
-              Text(simSignedMoney(t.realizedPnl),
+              Text(simSignedMoney(t.realizedPnl, currency: simState.currency),
                   style: TextStyle(
                       color: NqeColors.pnl(t.realizedPnl),
                       fontWeight: FontWeight.w800,
