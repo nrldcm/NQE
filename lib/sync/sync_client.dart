@@ -24,6 +24,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../services/crypto_service.dart';
+import '../sim/sim_state.dart';
+import '../sim/sim_sync.dart';
 import '../state/app_state.dart';
 import 'sync_engine.dart';
 import 'sync_repo.dart';
@@ -250,6 +252,9 @@ class SyncClient extends ChangeNotifier {
       final json = await CryptoService.instance.decryptSecret(frame);
       final records = SyncEngine.decodePayload(json);
       await SyncRepo.instance.applyRemote(records);
+      // Sandbox rows ride the same channel but land in the sim DB only.
+      final simApplied = await SimSyncRepo.instance.applyRemote(records);
+      if (simApplied > 0) await simState.onRemoteSimApplied();
       // Refresh the reused screens with the merged data.
       await appState.load();
       // Reply with our latest snapshot so the peer converges too.
@@ -269,6 +274,7 @@ class SyncClient extends ChangeNotifier {
     if (channel == null || !_authed) return;
     try {
       final records = await SyncRepo.instance.buildAll();
+      records.addAll(await SimSyncRepo.instance.buildAll());
       final json = SyncEngine.encodePayload(records);
       final hash = json.hashCode;
       if (!force && hash == _lastSentHash) return;
@@ -291,12 +297,14 @@ class SyncClient extends ChangeNotifier {
   void _bindAppState() {
     if (_appStateBound) return;
     appState.addListener(_onLocalChange);
+    simState.addListener(_onLocalChange); // sandbox edits push too
     _appStateBound = true;
   }
 
   void _unbindAppState() {
     if (!_appStateBound) return;
     appState.removeListener(_onLocalChange);
+    simState.removeListener(_onLocalChange);
     _appStateBound = false;
     _debounce?.cancel();
     _debounce = null;

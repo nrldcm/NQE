@@ -20,10 +20,16 @@ class SimDb {
     final path = p.join(dir.path, 'nqe_sandbox.db');
     return openDatabase(
       path,
-      version: 1,
+      version: 2,
       onConfigure: (d) async => d.execute('PRAGMA foreign_keys = ON'),
       onCreate: (d, _) async => _create(d),
-      onUpgrade: (d, _, __) async => _create(d),
+      onUpgrade: (d, _, __) async {
+        await _create(d);
+        // v2: change-tracking columns + tombstones for cross-device sync.
+        try {
+          await d.execute('ALTER TABLE sim_orders ADD COLUMN updated_at INTEGER');
+        } catch (_) {/* already present */}
+      },
     );
   }
 
@@ -54,6 +60,12 @@ class SimDb {
       CREATE TABLE IF NOT EXISTS sim_watch(
         id TEXT PRIMARY KEY, account_id TEXT, symbol TEXT, market INTEGER,
         added_at INTEGER)''');
+    // Deletions are recorded so a closed position / cancelled order propagates
+    // across paired devices (last-writer-wins with the live rows).
+    await d.execute('''
+      CREATE TABLE IF NOT EXISTS sim_tombstones(
+        entity TEXT, id TEXT, updated_at INTEGER,
+        PRIMARY KEY(entity, id))''');
   }
 
   // ---- accounts ----
@@ -86,7 +98,7 @@ class SimDb {
       conflictAlgorithm: ConflictAlgorithm.replace);
 
   Future<void> deletePosition(String id) async =>
-      (await db).delete('sim_positions', where: 'id=?', whereArgs: [id]);
+      _deleteWithTomb('sim_positions', id);
 
   // ---- orders ----
   Future<List<SimOrder>> orders(String accountId, {bool openOnly = false}) async {
@@ -97,11 +109,13 @@ class SimDb {
     return rows.map(SimOrder.fromMap).toList();
   }
 
-  Future<void> upsertOrder(SimOrder o) async => (await db).insert(
-      'sim_orders', o.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+  Future<void> upsertOrder(SimOrder o) async {
+    final m = o.toMap()..['updated_at'] = DateTime.now().millisecondsSinceEpoch;
+    await (await db)
+        .insert('sim_orders', m, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
 
-  Future<void> deleteOrder(String id) async =>
-      (await db).delete('sim_orders', where: 'id=?', whereArgs: [id]);
+  Future<void> deleteOrder(String id) async => _deleteWithTomb('sim_orders', id);
 
   // ---- trades ----
   Future<List<SimTrade>> trades(String accountId, {int limit = 200}) async {
@@ -126,6 +140,21 @@ class SimDb {
   Future<void> upsertWatch(SimWatch w) async => (await db).insert(
       'sim_watch', w.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
 
-  Future<void> deleteWatch(String id) async =>
-      (await db).delete('sim_watch', where: 'id=?', whereArgs: [id]);
+  Future<void> deleteWatch(String id) async => _deleteWithTomb('sim_watch', id);
+
+  // ---- sync support (tombstones + raw access) ----
+  Future<void> _deleteWithTomb(String table, String id) async {
+    final d = await db;
+    await d.delete(table, where: 'id=?', whereArgs: [id]);
+    await d.insert(
+        'sim_tombstones',
+        {'entity': table, 'id': id, 'updated_at': DateTime.now().millisecondsSinceEpoch},
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<List<Map<String, Object?>>> rawRows(String table) async =>
+      (await db).query(table);
+
+  Future<List<Map<String, Object?>>> tombstoneRows() async =>
+      (await db).query('sim_tombstones');
 }

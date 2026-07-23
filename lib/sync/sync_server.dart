@@ -31,6 +31,8 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../services/auth_service.dart';
 import '../services/crypto_service.dart';
+import '../sim/sim_state.dart';
+import '../sim/sim_sync.dart';
 import '../state/app_state.dart';
 import 'foreground.dart';
 import 'net_util.dart';
@@ -238,12 +240,14 @@ class SyncServer extends ChangeNotifier {
   void _bindAppState() {
     if (_appStateBound) return;
     appState.addListener(_onLocalChange);
+    simState.addListener(_onLocalChange); // sandbox edits push too
     _appStateBound = true;
   }
 
   void _unbindAppState() {
     if (!_appStateBound) return;
     appState.removeListener(_onLocalChange);
+    simState.removeListener(_onLocalChange);
     _appStateBound = false;
     _debounce?.cancel();
     _debounce = null;
@@ -517,6 +521,7 @@ class SyncServer extends ChangeNotifier {
   Future<void> _sendLocalPayload(WebSocketChannel channel) async {
     try {
       final records = await SyncRepo.instance.buildAll();
+      records.addAll(await SimSyncRepo.instance.buildAll());
       final json = SyncEngine.encodePayload(records);
       final encrypted = await CryptoService.instance.encryptSecret(json);
       channel.sink.add(encrypted);
@@ -552,6 +557,7 @@ class SyncServer extends ChangeNotifier {
     if (_peers.isEmpty) return;
     try {
       final records = await SyncRepo.instance.buildAll();
+      records.addAll(await SimSyncRepo.instance.buildAll());
       final json = SyncEngine.encodePayload(records);
       // Skip when nothing changed since the last send — this stops an applied
       // remote frame from echoing back and forth forever.
@@ -577,6 +583,14 @@ class SyncServer extends ChangeNotifier {
     final json = await CryptoService.instance.decryptSecret(frame);
     final records = SyncEngine.decodePayload(json);
     await SyncRepo.instance.applyRemote(records);
+    // Sandbox rows land in the sim DB only; then the phone (authority) reloads
+    // so a desktop-placed order enters the engine loop and executes here.
+    final simApplied = await SimSyncRepo.instance.applyRemote(records);
+    if (simApplied > 0) {
+      try {
+        await simState.onRemoteSimApplied();
+      } catch (_) {/* non-fatal */}
+    }
     // Refresh the phone's own screens so a desktop-originated edit shows up
     // live here too (two-way convergence). Best-effort — never throws.
     try {

@@ -7,6 +7,7 @@
 import 'package:flutter/material.dart';
 
 import '../../services/auth_service.dart';
+import '../../sim/sim_state.dart';
 import '../../sim/ui/sandbox_screen.dart';
 import '../../state/app_state.dart';
 import '../../sync/sync_client.dart';
@@ -78,6 +79,10 @@ class _DesktopBootstrapState extends State<_DesktopBootstrap> {
       paired = false;
     }
 
+    // A paired desktop mirrors the phone's Sandbox engine (it displays synced
+    // state and forwards orders) so the two devices can never diverge.
+    simState.mirror = paired;
+
     if (paired) {
       // Auto-connect to the paired phone; state surfaces via ConnectionWatcher.
       try {
@@ -107,6 +112,8 @@ class _DesktopBootstrapState extends State<_DesktopBootstrap> {
   }
 
   void _onPaired() {
+    // Now paired → this desktop mirrors the phone's Sandbox.
+    simState.mirror = true;
     // Re-run boot so the lock (now mirrored from the phone) is applied.
     setState(() {
       _ready = false;

@@ -41,6 +41,11 @@ class SimState extends ChangeNotifier {
 
   bool _started = false;
 
+  /// When true this device MIRRORS a paired authority (the phone): it displays
+  /// synced sim state and forwards orders, but does NOT run the matching engine
+  /// locally, so the two devices can't diverge. Set on a paired desktop.
+  bool mirror = false;
+
   SimAccount? get account => _pf?.account;
   List<SimPosition> get positions => _pf?.positions ?? const [];
   List<SimOrder> get openOrders => _pf?.orders ?? const [];
@@ -155,16 +160,41 @@ class SimState extends ChangeNotifier {
   void _onPrices() {
     final pf = _pf;
     if (pf == null) return;
-    final effect = SimEngine.onTick(pf,
-        priceOf: priceOf, nowMs: _now(), uid: uid, fxOf: fxOf);
-    if (effect.trades.isNotEmpty ||
-        effect.filledOrders.isNotEmpty ||
-        effect.liquidatedSymbols.isNotEmpty ||
-        effect.removedOrderIds.isNotEmpty) {
-      _persist(effect);
-      _noticeForEffect(effect);
+    // A mirror never matches orders / liquidates locally — the authority does
+    // that and the result syncs back. It still repaints for live prices/P&L.
+    if (!mirror) {
+      final effect = SimEngine.onTick(pf,
+          priceOf: priceOf, nowMs: _now(), uid: uid, fxOf: fxOf);
+      if (effect.trades.isNotEmpty ||
+          effect.filledOrders.isNotEmpty ||
+          effect.liquidatedSymbols.isNotEmpty ||
+          effect.removedOrderIds.isNotEmpty) {
+        _persist(effect);
+        _noticeForEffect(effect);
+      }
     }
-    // Always notify so live prices/P&L refresh on screen.
+    notifyListeners();
+  }
+
+  /// Called by the sync layer after remote sandbox rows are applied, so the
+  /// in-memory portfolio reflects them (and, on the authority, newly-synced
+  /// orders enter the engine loop).
+  Future<void> onRemoteSimApplied() async {
+    final accounts = await _db.accounts();
+    if (accounts.isEmpty) return;
+    final prevId = _pf?.account.id;
+    final acc = accounts.firstWhere((a) => a.id == prevId,
+        orElse: () => accounts.first);
+    final pos = await _db.positions(acc.id);
+    final ord = await _db.orders(acc.id, openOnly: true);
+    _pf = SimPortfolio(account: acc, positions: pos, orders: ord);
+    trades = await _db.trades(acc.id);
+    watch = await _db.watch(acc.id);
+    price.subscribeAll({
+      ...pos.map((e) => e.symbol),
+      ...ord.map((e) => e.symbol),
+      ...watch.map((e) => e.symbol),
+    });
     notifyListeners();
   }
 
@@ -175,6 +205,15 @@ class SimState extends ChangeNotifier {
     final pf = _pf;
     if (pf == null) return 'No sandbox account.';
     price.subscribe(order.symbol);
+    // On a mirror, don't match locally — record the order as open, let it sync
+    // to the authority, which executes it and syncs the result back.
+    if (mirror) {
+      order.status = OrderStatus.open;
+      pf.orders.add(order);
+      await _db.upsertOrder(order);
+      notifyListeners();
+      return null;
+    }
     final e = SimEngine.placeOrder(pf, order,
         priceOf: priceOf, nowMs: _now(), uid: uid, fxOf: fxOf);
     if (e.rejected) return e.rejectReason;
