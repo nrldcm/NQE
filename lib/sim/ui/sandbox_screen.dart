@@ -286,9 +286,10 @@ class _Header extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(Icons.science_outlined, size: 20, color: pal.textHi),
+              Icon(live ? Icons.candlestick_chart : Icons.science_outlined,
+                  size: 20, color: pal.textHi),
               const SizedBox(width: 8),
-              Text('Sandbox',
+              Text(live ? 'Trading' : 'Sandbox',
                   style: TextStyle(
                       color: pal.textHi,
                       fontSize: 18,
@@ -297,12 +298,12 @@ class _Header extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
-                  color: pal.textHi.withOpacity(0.08),
+                  color: (live ? NqeColors.gain : pal.textLo).withOpacity(0.14),
                   borderRadius: BorderRadius.circular(5),
                 ),
-                child: Text('PAPER',
+                child: Text(live ? 'LIVE DATA' : 'DEMO',
                     style: TextStyle(
-                        color: pal.textLo,
+                        color: live ? NqeColors.gain : pal.textLo,
                         fontSize: 9,
                         fontWeight: FontWeight.w800,
                         letterSpacing: 0.5)),
@@ -311,8 +312,7 @@ class _Header extends StatelessWidget {
               // Feed toggle
               InkWell(
                 borderRadius: BorderRadius.circular(20),
-                onTap: () => simState
-                    .setFeedMode(live ? FeedMode.simulated : FeedMode.live),
+                onTap: () => _confirmFeedSwitch(context, toLive: !live),
                 child: Container(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -399,6 +399,32 @@ class _Header extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Future<void> _confirmFeedSwitch(BuildContext context,
+      {required bool toLive}) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: Text(toLive ? 'Switch to Live data?' : 'Switch to Simulated?'),
+        content: Text(toLive
+            ? 'The chart and prices will use REAL market data. Your trades stay '
+                'simulated — virtual money only, no real orders are placed.'
+            : 'Prices will use an offline simulation for practice. Your account '
+                'and positions are unchanged.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(c, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(c, true),
+              child: Text(toLive ? 'Go Live' : 'Simulate')),
+        ],
+      ),
+    );
+    if (ok == true) {
+      simState.setFeedMode(toLive ? FeedMode.live : FeedMode.simulated);
+    }
   }
 
   Future<void> _confirmReset(BuildContext context) async {

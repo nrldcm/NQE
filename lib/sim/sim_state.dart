@@ -10,6 +10,7 @@ import 'sim_db.dart';
 import 'sim_engine.dart';
 import 'sim_market.dart';
 import 'sim_models.dart';
+import 'sim_notify.dart';
 import 'sim_price.dart';
 
 /// Global singleton (mirrors the real-ledger `appState`).
@@ -398,6 +399,11 @@ class SimState extends ChangeNotifier {
     notices.insert(0, n);
     if (notices.length > 60) notices.removeRange(60, notices.length);
     lastNotice = n;
+    // Also emit a real Android system notification for trade events (fills,
+    // stop-loss, take-profit, liquidation) so it surfaces off-screen too.
+    if (n.type != SimNoticeType.info) {
+      SimNotify.instance.show(n.title, n.message);
+    }
   }
 
   String _sideWord(OrderSide s) => s == OrderSide.buy ? 'buy' : 'sell';
