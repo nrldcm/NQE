@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../calc.dart';
 import '../format.dart';
 import '../models.dart';
+import '../sim/ui/sandbox_books.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/charts.dart';
@@ -51,12 +52,15 @@ class DashboardScreen extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 4),
+                // The simulation book (view-only) always sits at the top of the
+                // Home books list too, so the Sandbox surfaces from Home.
+                const SandboxBooksTile(),
                 if (appState.accounts.isEmpty)
                   Padding(
-                    padding: const EdgeInsets.only(top: 24),
+                    padding: const EdgeInsets.only(top: 12),
                     child: EmptyState(
                       icon: Icons.account_balance_wallet_outlined,
-                      title: 'No books yet',
+                      title: 'No real books yet',
                       subtitle: 'Create your first trading book',
                       action: FilledButton.icon(
                         onPressed: () => showAccountEditor(context),

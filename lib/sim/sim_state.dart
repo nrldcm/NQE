@@ -313,9 +313,9 @@ class SimState extends ChangeNotifier {
       for (final p in List<SimPosition>.from(positions)) {
         await _db.deletePosition(p.id);
       }
-      for (final o in List<SimOrder>.from(openOrders)) {
-        await _db.deleteOrder(o.id);
-      }
+      // Clear ALL orders — open AND filled/closed history — not just the ones
+      // currently open, so a reset truly wipes the sandbox order history.
+      await _db.clearOrders(acc.id);
       _pf = SimPortfolio(account: acc);
       await _db.upsertAccount(acc);
       // Clear the blotter too, so the Overview (fees, trade count, win rate)

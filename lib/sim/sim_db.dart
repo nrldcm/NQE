@@ -160,6 +160,22 @@ class SimDb {
     await d.delete('sim_trades', where: 'account_id=?', whereArgs: [accountId]);
   }
 
+  /// Delete EVERY order for an account (open + filled/closed history), each
+  /// tombstoned so the clear propagates to the paired device on next sync.
+  Future<void> clearOrders(String accountId) async {
+    final d = await db;
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    final rows = await d.query('sim_orders',
+        columns: ['id'], where: 'account_id=?', whereArgs: [accountId]);
+    for (final r in rows) {
+      await d.insert(
+          'sim_tombstones',
+          {'entity': 'sim_orders', 'id': (r['id'] ?? '').toString(), 'updated_at': ts},
+          conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+    await d.delete('sim_orders', where: 'account_id=?', whereArgs: [accountId]);
+  }
+
   // ---- watchlist ----
   Future<List<SimWatch>> watch(String accountId) async {
     final rows = await (await db).query('sim_watch',
