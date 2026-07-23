@@ -1,25 +1,25 @@
-// Desktop-side pairing — the desktop connects OUT to the phone.
+// Desktop-side pairing — the desktop connects OUT to the phone over plain HTTP.
 //
 // Why outbound: a locked-down laptop's firewall blocks INBOUND connections
-// (approving needs admin), so the desktop can never reliably accept the phone
-// connecting to it. Outbound connections are not blocked, so the desktop is the
-// one that reaches the phone (which runs the server — Android allows inbound).
+// (approving needs admin), so the desktop must be the one that reaches the
+// phone (which runs the server — Android allows inbound).
 //
-// Flow (mirrors the SAS handshake, direction reversed):
-//   1. Desktop finds the phone — LAN auto-scan (probe <subnet>.*:port/nqe) or a
-//      manually typed IP.
-//   2. Desktop opens ws://phone:port/pair, sends its ephemeral public key.
-//   3. Phone replies with its public key + session id; both derive the shared
-//      key and the 6-digit code. The phone shows the code.
-//   4. The human types that code into the desktop; the desktop verifies it
-//      equals its own computed code, then asks the phone for the sealed payload
-//      (sync endpoint + key + PIN) and opens it.
+// Why HTTP (not WebSocket): pairing is just two request/response round-trips.
+// HttpClient with explicit timeouts is rock-solid across platforms and can
+// never hang, unlike a desktop WebSocket handshake.
+//
+// Flow:
+//   1. Desktop finds the phone — LAN auto-scan (GET <subnet>.*:port/nqe) or a
+//      typed IP.
+//   2. POST /pair/hello {pub}  → phone returns {sid, phonePub}; both derive the
+//      shared key + the 6-digit code. The phone shows the code.
+//   3. The human types the code into the desktop; on a local match the desktop
+//      POST /pair/confirm → phone returns the sealed {sync endpoint + key + PIN}.
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'net_util.dart';
 import 'pairing.dart';
@@ -39,13 +39,17 @@ class DesktopPairing extends ChangeNotifier {
   String? message;
   List<String> found = [];
 
-  WebSocketChannel? _channel;
-  StreamSubscription? _sub;
   PairingKeys? _keys;
   String? _sid;
   String? _phonePubB64;
   String? _expectedCode;
-  final _payloadCompleter = <Completer<String>>[];
+  String? _host;
+  int? _port;
+
+  /// The 6-digit code this side computed (equals the phone's). Exposed for
+  /// tests only — the UI never reads it (the human types the phone's code).
+  @visibleForTesting
+  String? get expectedCode => _expectedCode;
 
   /// Scan the local network(s) for a phone running the NQE sync server on
   /// [port]. Returns reachable phone IPs (also stored in [found]).
@@ -69,16 +73,20 @@ class DesktopPairing extends ChangeNotifier {
         await Future.wait(batch);
       }
     } catch (_) {
-      // Scan best-effort; the user can still type the IP.
+      // Best-effort; the user can still type the IP.
     }
     found = hits;
-    _set(
-      hits.isEmpty ? DesktopPairState.idle : DesktopPairState.idle,
-      hits.isEmpty
-          ? 'No phone found. Check you are on the same Wi-Fi, then enter the '
-              'phone’s IP shown in NQE ▸ Settings ▸ Device Sync.'
-          : 'Found ${hits.length} device(s).',
-    );
+    // Don't clobber a connect that may have started; only settle if still
+    // scanning.
+    if (state == DesktopPairState.scanning) {
+      _set(
+        DesktopPairState.idle,
+        hits.isEmpty
+            ? 'No phone found. Check both are on the same Wi-Fi, then type the '
+                'phone’s IP (NQE ▸ Settings ▸ Device Sync shows it).'
+            : 'Found ${hits.length} device(s).',
+      );
+    }
     return hits;
   }
 
@@ -103,50 +111,28 @@ class DesktopPairing extends ChangeNotifier {
     }
   }
 
-  /// Connect to the phone at [host]:[port] and run the key exchange. On success
-  /// the state becomes [DesktopPairState.awaitingCode] and the caller should
-  /// prompt for the 6-digit code shown on the phone.
+  /// Connect to the phone and run the key exchange. On success the state becomes
+  /// [DesktopPairState.awaitingCode].
   Future<bool> connect(String host, int port) async {
-    await _teardown();
     _set(DesktopPairState.connecting, 'Connecting to $host:$port…');
     try {
       _keys = await Pairing.generateKeys();
-      final channel =
-          WebSocketChannel.connect(Uri.parse('ws://$host:$port/pair'));
-      _channel = channel;
-      await channel.ready.timeout(const Duration(seconds: 8));
-
-      final firstFrame = Completer<Map<String, dynamic>>();
-      _sub = channel.stream.listen(
-        (dynamic msg) {
-          try {
-            final map = jsonDecode(
-                    msg is String ? msg : msg.toString()) as Map<String, dynamic>;
-            if (!firstFrame.isCompleted && map['phonePub'] != null) {
-              firstFrame.complete(map);
-            } else if (map['payload'] != null && _payloadCompleter.isNotEmpty) {
-              final c = _payloadCompleter.removeAt(0);
-              if (!c.isCompleted) c.complete(map['payload'].toString());
-            } else if (map['error'] != null) {
-              if (!firstFrame.isCompleted) {
-                firstFrame.completeError(map['error'].toString());
-              }
-              if (_payloadCompleter.isNotEmpty) {
-                final c = _payloadCompleter.removeAt(0);
-                if (!c.isCompleted) c.completeError(map['error'].toString());
-              }
-            }
-          } catch (_) {/* ignore malformed */}
-        },
-        onError: (Object e) => _onDrop('$e'),
-        onDone: () => _onDrop('closed'),
-        cancelOnError: true,
-      );
-
-      channel.sink.add(jsonEncode({'hello': _keys!.publicKeyB64}));
-      final reply = await firstFrame.future.timeout(const Duration(seconds: 8));
-      _sid = reply['sid'].toString();
-      _phonePubB64 = reply['phonePub'].toString();
+      final resp = await _postJson(
+          host, port, '/pair/hello', {'pub': _keys!.publicKeyB64});
+      if (resp == null) {
+        _set(DesktopPairState.error,
+            'Could not reach the phone at $host:$port. Same Wi-Fi? Is “LAN Sync Server” on?');
+        return false;
+      }
+      if (resp['error'] != null || resp['phonePub'] == null) {
+        _set(DesktopPairState.error,
+            'Phone isn’t ready to pair. Open NQE ▸ Settings ▸ Device Sync ▸ Pair Desktop Device on the phone, then try again.');
+        return false;
+      }
+      _host = host;
+      _port = port;
+      _sid = resp['sid'].toString();
+      _phonePubB64 = resp['phonePub'].toString();
       final phonePub = Pairing.publicKeyFromB64(_phonePubB64!);
       _expectedCode = await Pairing.shortCode(
         sid: _sid!,
@@ -158,7 +144,6 @@ class DesktopPairing extends ChangeNotifier {
       return true;
     } catch (e) {
       _set(DesktopPairState.error, 'Could not reach the phone: $e');
-      await _teardown();
       return false;
     }
   }
@@ -166,9 +151,8 @@ class DesktopPairing extends ChangeNotifier {
   /// Verify the typed code against our computed code and, on a match, fetch and
   /// open the sealed payload from the phone.
   Future<PairingPayload?> submitCode(String code) async {
-    final channel = _channel;
-    if (channel == null || _sid == null || _phonePubB64 == null ||
-        _keys == null) {
+    if (_sid == null || _phonePubB64 == null || _keys == null ||
+        _host == null || _port == null) {
       return null;
     }
     if (code.trim() != _expectedCode) {
@@ -178,20 +162,21 @@ class DesktopPairing extends ChangeNotifier {
     }
     _set(DesktopPairState.verifying, 'Verifying…');
     try {
+      final resp = await _postJson(_host!, _port!, '/pair/confirm', const {});
+      if (resp == null || resp['payload'] == null) {
+        _set(DesktopPairState.awaitingCode,
+            'Could not fetch pairing data — try again.');
+        return null;
+      }
       final phonePub = Pairing.publicKeyFromB64(_phonePubB64!);
       final shared = await Pairing.deriveSharedKey(
         myKeyPair: _keys!.keyPair,
         peerPublicKey: phonePub,
         sid: _sid!,
       );
-      final completer = Completer<String>();
-      _payloadCompleter.add(completer);
-      channel.sink.add(jsonEncode({'confirm': true}));
-      final blob = await completer.future.timeout(const Duration(seconds: 10));
-      final payload =
-          await Pairing.openPayload(sharedKey: shared, blobB64: blob);
+      final payload = await Pairing.openPayload(
+          sharedKey: shared, blobB64: resp['payload'].toString());
       _set(DesktopPairState.paired, 'Paired.');
-      await _teardown();
       return payload;
     } catch (e) {
       _set(DesktopPairState.awaitingCode, 'Could not verify: $e');
@@ -199,23 +184,28 @@ class DesktopPairing extends ChangeNotifier {
     }
   }
 
-  void _onDrop(String why) {
-    if (state == DesktopPairState.awaitingCode ||
-        state == DesktopPairState.connecting ||
-        state == DesktopPairState.verifying) {
-      _set(DesktopPairState.error, 'Connection lost ($why). Try again.');
+  Future<Map<String, dynamic>?> _postJson(
+      String host, int port, String path, Map<String, dynamic> body) async {
+    HttpClient? client;
+    try {
+      client = HttpClient()..connectionTimeout = const Duration(seconds: 6);
+      final req = await client
+          .postUrl(Uri.parse('http://$host:$port$path'))
+          .timeout(const Duration(seconds: 6));
+      req.headers.contentType = ContentType.json;
+      req.add(utf8.encode(jsonEncode(body)));
+      final resp = await req.close().timeout(const Duration(seconds: 8));
+      final text = await resp
+          .transform(utf8.decoder)
+          .join()
+          .timeout(const Duration(seconds: 8));
+      if (text.trim().isEmpty) return <String, dynamic>{};
+      return jsonDecode(text) as Map<String, dynamic>;
+    } catch (_) {
+      return null;
+    } finally {
+      client?.close(force: true);
     }
-  }
-
-  Future<void> _teardown() async {
-    try {
-      await _sub?.cancel();
-    } catch (_) {/* ignore */}
-    _sub = null;
-    try {
-      await _channel?.sink.close();
-    } catch (_) {/* ignore */}
-    _channel = null;
   }
 
   void _set(DesktopPairState s, String? m) {
@@ -257,11 +247,5 @@ class DesktopPairing extends ChangeNotifier {
       return b >= 16 && b <= 31;
     }
     return false;
-  }
-
-  @override
-  void dispose() {
-    _teardown();
-    super.dispose();
   }
 }

@@ -233,6 +233,11 @@ class SyncServer extends ChangeNotifier {
   String? pairingCode; // the 6-digit SAS to show on the phone
   PairingKeys? _pairKeys;
   String? _pairSid;
+  SecretKey? _pairShared; // derived shared key for the current handshake
+
+  static const Map<String, String> _jsonHeaders = {
+    'content-type': 'application/json'
+  };
 
   bool get isPairing => pairingMode;
 
@@ -255,74 +260,68 @@ class SyncServer extends ChangeNotifier {
     pairingCode = null;
     _pairKeys = null;
     _pairSid = null;
+    _pairShared = null;
     notifyListeners();
   }
 
-  void _handlePairing(WebSocketChannel channel) {
-    StreamSubscription? sub;
-    SecretKey? shared;
-    sub = channel.stream.listen(
-      (dynamic message) async {
-        try {
-          final frame = message is String ? message : message.toString();
-          final map = jsonDecode(frame) as Map<String, dynamic>;
+  // Pairing is plain HTTP request/response (two round-trips). This is far more
+  // robust across platforms than a WebSocket and can't hang — the desktop uses
+  // bounded HttpClient timeouts.
 
-          // Step 1: desktop says hello with its ephemeral public key.
-          if (map['hello'] != null) {
-            if (!pairingMode || _pairKeys == null || _pairSid == null) {
-              channel.sink.add(jsonEncode({'error': 'not_pairing'}));
-              return;
-            }
-            final desktopPub =
-                Pairing.publicKeyFromB64(map['hello'].toString());
-            shared = await Pairing.deriveSharedKey(
-              myKeyPair: _pairKeys!.keyPair,
-              peerPublicKey: desktopPub,
-              sid: _pairSid!,
-            );
-            pairingCode = await Pairing.shortCode(
-              sid: _pairSid!,
-              desktopPub: desktopPub,
-              phonePub: _pairKeys!.publicKey,
-            );
-            pairingConnected = true;
-            notifyListeners();
-            channel.sink.add(jsonEncode(
-                {'sid': _pairSid, 'phonePub': _pairKeys!.publicKeyB64}));
-            return;
-          }
+  /// POST /pair/hello  { pub }  →  { sid, phonePub }
+  Future<Response> _pairHello(Request request) async {
+    if (!pairingMode || _pairKeys == null || _pairSid == null) {
+      return Response(409,
+          body: jsonEncode({'error': 'not_pairing'}), headers: _jsonHeaders);
+    }
+    try {
+      final body =
+          jsonDecode(await request.readAsString()) as Map<String, dynamic>;
+      final desktopPub = Pairing.publicKeyFromB64((body['pub'] ?? '').toString());
+      _pairShared = await Pairing.deriveSharedKey(
+        myKeyPair: _pairKeys!.keyPair,
+        peerPublicKey: desktopPub,
+        sid: _pairSid!,
+      );
+      pairingCode = await Pairing.shortCode(
+        sid: _pairSid!,
+        desktopPub: desktopPub,
+        phonePub: _pairKeys!.publicKey,
+      );
+      pairingConnected = true;
+      notifyListeners();
+      return Response.ok(
+        jsonEncode({'sid': _pairSid, 'phonePub': _pairKeys!.publicKeyB64}),
+        headers: _jsonHeaders,
+      );
+    } catch (e) {
+      return Response(400,
+          body: jsonEncode({'error': '$e'}), headers: _jsonHeaders);
+    }
+  }
 
-          // Step 2: the human matched the code on the desktop → send payload.
-          if (map['confirm'] == true && shared != null) {
-            final payload = await buildPairingPayload();
-            if (payload == null) {
-              channel.sink.add(jsonEncode({'error': 'no_payload'}));
-              return;
-            }
-            final blob =
-                await Pairing.sealPayload(sharedKey: shared!, payload: payload);
-            channel.sink.add(jsonEncode({'payload': blob}));
-            pairingConnected = false;
-            pairingCode = null;
-            notifyListeners();
-            return;
-          }
-        } catch (_) {
-          // Ignore malformed frames — a wrong client can't complete pairing.
-        }
-      },
-      onError: (Object _) {
-        pairingConnected = false;
-        notifyListeners();
-        sub?.cancel();
-      },
-      onDone: () {
-        pairingConnected = false;
-        notifyListeners();
-        sub?.cancel();
-      },
-      cancelOnError: true,
-    );
+  /// POST /pair/confirm  { }  →  { payload }  (sealed sync endpoint + PIN)
+  Future<Response> _pairConfirm(Request request) async {
+    final shared = _pairShared;
+    if (shared == null) {
+      return Response(409,
+          body: jsonEncode({'error': 'no_session'}), headers: _jsonHeaders);
+    }
+    try {
+      final payload = await buildPairingPayload();
+      if (payload == null) {
+        return Response(500,
+            body: jsonEncode({'error': 'no_payload'}), headers: _jsonHeaders);
+      }
+      final blob = await Pairing.sealPayload(sharedKey: shared, payload: payload);
+      pairingConnected = false;
+      pairingCode = null;
+      notifyListeners();
+      return Response.ok(jsonEncode({'payload': blob}), headers: _jsonHeaders);
+    } catch (e) {
+      return Response(500,
+          body: jsonEncode({'error': '$e'}), headers: _jsonHeaders);
+    }
   }
 
   /// Set the preferred sync port (persisted). Restarts the server if running so
@@ -358,19 +357,18 @@ class SyncServer extends ChangeNotifier {
         _handleConnection(channel);
       },
     );
-    final pairWs = webSocketHandler(
-      (WebSocketChannel channel, String? protocol) {
-        _handlePairing(channel);
-      },
-    );
-    return (Request request) {
+    return (Request request) async {
       final path = request.url.path;
       if (path == 'sync') return syncWs(request);
-      if (path == 'pair') return pairWs(request);
       // A tiny liveness probe used by the desktop's LAN scan to find this phone.
       if (path == 'nqe') {
-        return Response.ok('NQE',
-            headers: {'content-type': 'text/plain'});
+        return Response.ok('NQE', headers: {'content-type': 'text/plain'});
+      }
+      if (path == 'pair/hello' && request.method == 'POST') {
+        return _pairHello(request);
+      }
+      if (path == 'pair/confirm' && request.method == 'POST') {
+        return _pairConfirm(request);
       }
       return Response.notFound('NQE server');
     };
