@@ -94,14 +94,20 @@ jobs:
             *.exe
             *.zip
 
-      - name: Publish rolling + versioned (main)
+      # Publish the .exe into the SAME single `latest` release as the APK.
+      - name: Publish single release (main)
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
-          name: NQE — latest build
+          name: NQE v${{ steps.ver.outputs.version }}
+          body: |
+            NQE v${{ steps.ver.outputs.version }} — Funds managed by Willong Capital.
+
+            • Android — install `NQE-v${{ steps.ver.outputs.version }}.apk`
+            • Windows — run `NQE-v${{ steps.ver.outputs.version }}.exe` (single file)
           files: |
             *.exe
             *.zip
-          prerelease: true
+          prerelease: false
 

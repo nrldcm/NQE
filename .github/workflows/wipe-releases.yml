@@ -1,0 +1,40 @@
+name: Wipe all releases and tags
+
+# One-off maintenance: delete EVERY release and tag so we can start clean with
+# a single consolidated release (APK + .exe under one `latest` tag). Run
+# manually from the Actions tab / dispatch. Idempotent.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  wipe:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      R: ${{ github.repository }}
+    steps:
+      - name: Delete all releases
+        run: |
+          set +e
+          gh api "repos/$R/releases" --paginate --jq '.[].id' | while read -r id; do
+            [ -n "$id" ] || continue
+            gh api -X DELETE "repos/$R/releases/$id" && echo "deleted release $id"
+          done
+          echo "done releases"
+
+      - name: Delete all tags
+        run: |
+          set +e
+          gh api "repos/$R/tags" --paginate --jq '.[].name' | while read -r t; do
+            [ -n "$t" ] || continue
+            gh api -X DELETE "repos/$R/git/refs/tags/$t" && echo "deleted tag $t"
+          done
+          echo "done tags"
+
+      - name: Show remaining
+        run: |
+          echo "Releases left:"; gh api "repos/$R/releases" --jq '.[].tag_name' || true
+          echo "Tags left:"; gh api "repos/$R/tags" --jq '.[].name' || true
