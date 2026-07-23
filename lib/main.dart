@@ -10,8 +10,10 @@ import 'package:windows_single_instance/windows_single_instance.dart';
 import 'services/auth_service.dart';
 import 'sim/sim_state.dart';
 import 'screens/desktop/desktop_shell.dart';
+import 'screens/desktop_mode_gate.dart';
 import 'screens/lock_screen.dart';
 import 'screens/splash_screen.dart';
+import 'sync/sync_server.dart';
 import 'theme.dart';
 
 Future<void> main(List<String> args) async {
@@ -144,6 +146,19 @@ class _NqeAppState extends State<NqeApp> with WidgetsBindingObserver {
           theme: buildNqeTheme(Brightness.light),
           darkTheme: buildNqeTheme(Brightness.dark),
           themeMode: themeController.mode,
+          // While a desktop is connected in Desktop Mode, overlay a full-screen
+          // gate so the phone (the source of truth) isn't driven at the same
+          // time — one active device, no conflicting edits.
+          builder: (context, child) => ListenableBuilder(
+            listenable: SyncServer.instance,
+            builder: (context, _) => Stack(
+              children: [
+                child ?? const SizedBox.shrink(),
+                if (SyncServer.instance.connectedPeers > 0)
+                  const DesktopModeGate(),
+              ],
+            ),
+          ),
           home: const SplashScreen(),
         );
       },
