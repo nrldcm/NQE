@@ -8,6 +8,7 @@
 import 'package:flutter/material.dart';
 
 import '../../theme.dart';
+import '../../widgets/common.dart';
 import '../sim_models.dart';
 import '../sim_market.dart';
 import '../sim_state.dart';
@@ -201,72 +202,197 @@ class _SandboxScreenState extends State<SandboxScreen>
 
   // ---- desktop -------------------------------------------------------------
 
+  // The desktop mirrors mobile's 5 tabs (Trade / Wallet / Positions / Books /
+  // Markets) but each uses a wide, desktop-appropriate layout. Trade is the
+  // main terminal (markets · chart · ticket) with the performance Overview
+  // pinned as the top section of the workspace.
   Widget _desktop(BuildContext context) {
     final pal = context.nqe;
     return Column(
       children: [
         _Header(onSelect: _select),
+        Material(
+          color: pal.bg,
+          child: TabBar(
+            controller: _tabs,
+            isScrollable: true,
+            tabAlignment: TabAlignment.start,
+            labelColor: pal.textHi,
+            unselectedLabelColor: pal.textLo,
+            indicatorColor: pal.textHi,
+            labelStyle:
+                const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+            tabs: const [
+              Tab(text: 'Trade'),
+              Tab(text: 'Wallet'),
+              Tab(text: 'Positions'),
+              Tab(text: 'Books'),
+              Tab(text: 'Markets'),
+            ],
+          ),
+        ),
+        Divider(height: 1, color: pal.line),
         Expanded(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+          child: TabBarView(
+            controller: _tabs,
             children: [
-              // Left — markets
-              SizedBox(
-                width: 320,
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 8, 16),
-                  child: SandboxMarketPanel(
-                      selected: _symbol, onSelect: _select, compact: true),
-                ),
-              ),
-              VerticalDivider(width: 1, color: pal.line),
-              // Center — chart + book
-              Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _SymbolBar(symbol: _symbol, market: _market),
-                      const SizedBox(height: 12),
-                      SimCard(
-                        padding: const EdgeInsets.fromLTRB(10, 12, 12, 8),
-                        child: SandboxChartPane(
-                            symbol: _symbol, market: _market, height: 300),
-                      ),
-                      const SizedBox(height: 12),
-                      // Bounded height so it scrolls within the (now scrollable)
-                      // column instead of overflowing when indicators grow the
-                      // chart.
-                      SizedBox(
-                        height: 420,
-                        child: SandboxPositionsPanel(onSelect: _select),
-                      ),
-                    ],
+              _desktopTradeTab(context),
+              // Wallet — constrained + centred; a full-width wallet card reads
+              // awkwardly stretched on a wide screen.
+              Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 560),
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 16),
+                    child: SandboxWalletPanel(),
                   ),
                 ),
               ),
-              VerticalDivider(width: 1, color: pal.line),
-              // Right — order ticket + analytics
-              SizedBox(
-                width: 340,
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(12, 12, 16, 16),
-                  child: Column(
-                    children: [
-                      SandboxTradeTicket(symbol: _symbol),
-                      const SizedBox(height: 12),
-                      SizedBox(
-                        height: 520,
-                        child: SandboxAnalyticsPanel(),
-                      ),
-                    ],
+              // Positions — full width.
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                child: SandboxPositionsPanel(onSelect: _select),
+              ),
+              // Books — the analytics + trade blotter, constrained + centred.
+              Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 900),
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 16),
+                    child: SandboxAnalyticsPanel(),
                   ),
+                ),
+              ),
+              // Markets — full width; selecting jumps to the Trade tab.
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                child: SandboxMarketPanel(
+                  selected: _symbol,
+                  onSelect: (s) {
+                    _select(s);
+                    _tabs?.animateTo(0);
+                  },
                 ),
               ),
             ],
           ),
         ),
+      ],
+    );
+  }
+
+  // Trade tab — the wide three-column terminal: markets list · (Overview +
+  // chart) · order ticket. The Overview strip is the top section of the centre
+  // workspace, above the symbol bar and chart.
+  Widget _desktopTradeTab(BuildContext context) {
+    final pal = context.nqe;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Left — markets
+        SizedBox(
+          width: 320,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 8, 16),
+            child: SandboxMarketPanel(
+                selected: _symbol, onSelect: _select, compact: true),
+          ),
+        ),
+        VerticalDivider(width: 1, color: pal.line),
+        // Center — Overview (top section) + symbol bar + chart
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const _OverviewStrip(),
+                const SizedBox(height: 14),
+                _SymbolBar(symbol: _symbol, market: _market),
+                const SizedBox(height: 12),
+                SimCard(
+                  padding: const EdgeInsets.fromLTRB(10, 12, 12, 8),
+                  child: SandboxChartPane(
+                      symbol: _symbol, market: _market, height: 360),
+                ),
+              ],
+            ),
+          ),
+        ),
+        VerticalDivider(width: 1, color: pal.line),
+        // Right — order ticket
+        SizedBox(
+          width: 340,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(12, 12, 16, 16),
+            child: SandboxTradeTicket(symbol: _symbol),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Compact performance Overview shown as the top section of the desktop Trade
+/// workspace: the same summary metrics as the Books tab, laid out as a single
+/// horizontal strip of stat cards. Reads [simState] directly — the screen's
+/// top-level ListenableBuilder rebuilds it every tick.
+class _OverviewStrip extends StatelessWidget {
+  const _OverviewStrip();
+
+  @override
+  Widget build(BuildContext context) {
+    final acc = simState.account;
+    final trades = simState.trades;
+    final closed = trades.where((t) => t.realizedPnl != 0).toList();
+    final wins = closed.where((t) => t.realizedPnl > 0).length;
+    final winRate = closed.isEmpty ? 0.0 : wins / closed.length * 100;
+    final fees = trades.fold<double>(0, (s, t) => s + t.fee);
+    final equity = simState.equity;
+    final start = acc?.startingCash ?? 0;
+    final totalRet = start == 0 ? 0.0 : (equity - start) / start * 100;
+    final cur = simState.currency;
+
+    final cards = <Widget>[
+      StatCard(
+          label: 'Equity',
+          value: simMoney(equity, currency: cur),
+          icon: Icons.account_balance_wallet_outlined),
+      StatCard(
+        label: 'Total return',
+        value: signedPctStr(totalRet),
+        valueColor: NqeColors.pnl(totalRet),
+        icon: Icons.trending_up,
+      ),
+      StatCard(
+        label: 'Realized P/L',
+        value: simSignedMoney(acc?.realizedPnl ?? 0, currency: cur),
+        valueColor: NqeColors.pnl(acc?.realizedPnl ?? 0),
+        icon: Icons.paid_outlined,
+      ),
+      StatCard(
+        label: 'Win rate',
+        value: closed.isEmpty ? '—' : '${winRate.toStringAsFixed(0)}%',
+        sub: '${closed.length} closed',
+        icon: Icons.emoji_events_outlined,
+      ),
+      StatCard(
+          label: 'Fees paid',
+          value: simMoney(fees, currency: cur),
+          icon: Icons.receipt_outlined),
+      StatCard(
+          label: 'Total trades',
+          value: '${trades.length}',
+          icon: Icons.swap_horiz),
+    ];
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var i = 0; i < cards.length; i++) ...[
+          if (i > 0) const SizedBox(width: 10),
+          Expanded(child: cards[i]),
+        ],
       ],
     );
   }
@@ -358,30 +484,10 @@ class _Header extends StatelessWidget {
                 icon: Icon(Icons.more_vert, color: pal.textHi),
                 onSelected: (v) {
                   if (v == 'reset') _confirmReset(context);
-                  if (v == 'topup') sandboxTopUp(context);
-                  if (v == 'cashout') sandboxCashOut(context);
                 },
+                // Top up / Cash out live on the Wallet tab now, so the menu is
+                // just the account reset.
                 itemBuilder: (context) => const [
-                  PopupMenuItem(
-                    value: 'topup',
-                    child: Row(
-                      children: [
-                        Icon(Icons.account_balance_wallet_outlined, size: 18),
-                        SizedBox(width: 10),
-                        Text('Top up wallet'),
-                      ],
-                    ),
-                  ),
-                  PopupMenuItem(
-                    value: 'cashout',
-                    child: Row(
-                      children: [
-                        Icon(Icons.arrow_outward, size: 18),
-                        SizedBox(width: 10),
-                        Text('Cash out'),
-                      ],
-                    ),
-                  ),
                   PopupMenuItem(
                     value: 'reset',
                     child: Row(

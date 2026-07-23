@@ -59,6 +59,7 @@ class SandboxWalletPanel extends StatelessWidget {
                   ),
                   const SizedBox(height: 16),
                   Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       _stat(context, 'Equity', simMoney(equity, currency: cur)),
                       Container(width: 1, height: 32, color: pal.line),
@@ -70,19 +71,33 @@ class SandboxWalletPanel extends StatelessWidget {
                   Row(
                     children: [
                       Expanded(
-                        child: FilledButton.icon(
-                          onPressed: () => sandboxTopUp(context),
-                          icon: const Icon(Icons.add, size: 18),
-                          label: const Text('Top Up'),
+                        child: SizedBox(
+                          height: 48,
+                          child: FilledButton.icon(
+                            onPressed: () => sandboxTopUp(context),
+                            style: FilledButton.styleFrom(
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12)),
+                            ),
+                            icon: const Icon(Icons.add, size: 18),
+                            label: const Text('Top Up'),
+                          ),
                         ),
                       ),
                       const SizedBox(width: 12),
                       Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed:
-                              free > 0 ? () => sandboxCashOut(context) : null,
-                          icon: const Icon(Icons.arrow_outward, size: 18),
-                          label: const Text('Cash Out'),
+                        child: SizedBox(
+                          height: 48,
+                          child: OutlinedButton.icon(
+                            onPressed:
+                                free > 0 ? () => sandboxCashOut(context) : null,
+                            style: OutlinedButton.styleFrom(
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12)),
+                            ),
+                            icon: const Icon(Icons.arrow_outward, size: 18),
+                            label: const Text('Cash Out'),
+                          ),
                         ),
                       ),
                     ],
@@ -114,7 +129,7 @@ class SandboxWalletPanel extends StatelessWidget {
     final pal = context.nqe;
     return Expanded(
       child: Padding(
-        padding: const EdgeInsets.only(left: 2, right: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 6),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -224,7 +239,10 @@ Future<double?> _amountDialog(
                   prefixText: '${currencyGlyph(cur)} ',
                   hintText: '0.00',
                   errorText: over ? 'More than available' : null,
-                  border: const OutlineInputBorder(),
+                  contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 14),
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12)),
                 ),
               ),
               const SizedBox(height: 12),
@@ -235,6 +253,12 @@ Future<double?> _amountDialog(
                   for (final p in presets)
                     ActionChip(
                       label: Text('+${compactAmount(p)}'),
+                      visualDensity: VisualDensity.compact,
+                      materialTapTargetSize:
+                          MaterialTapTargetSize.shrinkWrap,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          side: BorderSide(color: pal.line)),
                       onPressed: (max != null && p > max)
                           ? null
                           : () => setAmt(p),
@@ -242,6 +266,12 @@ Future<double?> _amountDialog(
                   if (max != null && max > 0)
                     ActionChip(
                       label: const Text('Max'),
+                      visualDensity: VisualDensity.compact,
+                      materialTapTargetSize:
+                          MaterialTapTargetSize.shrinkWrap,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          side: BorderSide(color: pal.line)),
                       onPressed: () => setAmt(max),
                     ),
                 ],

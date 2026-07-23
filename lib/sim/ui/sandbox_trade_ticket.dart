@@ -26,6 +26,13 @@ class SandboxTradeTicket extends StatefulWidget {
 }
 
 class _SandboxTradeTicketState extends State<SandboxTradeTicket> {
+  // Shared sizing tokens so every control in the ticket reads as one system.
+  static const double _kControlRadius = 12; // segmented / side / quick / fields
+  static const double _kControlHeight = 44; // segmented + side buttons
+  static const double _kQuickBtnHeight = 40; // %/Max quick row
+  static const double _kSubmitHeight = 48; // primary submit
+  static const double _kFieldGap = 12; // vertical gap between input rows
+
   TradeMode _mode = TradeMode.spot;
   OrderSide _side = OrderSide.buy;
   OrderType _type = OrderType.market;
@@ -358,30 +365,32 @@ class _SandboxTradeTicketState extends State<SandboxTradeTicket> {
             controller: _qtyCtrl,
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
             onChanged: (_) => setState(() {}),
-            decoration: const InputDecoration(
-              labelText: 'Quantity',
-              isDense: true,
-            ),
+            decoration: _fieldDecoration('Quantity'),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 10),
           Row(
             children: [
-              for (final p in const [0.25, 0.5, 0.75, 1.0])
+              for (final (i, p) in const [0.25, 0.5, 0.75, 1.0].indexed) ...[
+                if (i > 0) const SizedBox(width: 8),
                 Expanded(
-                  child: Padding(
-                    padding: EdgeInsets.only(right: p == 1.0 ? 0 : 6),
+                  child: SizedBox(
+                    height: _kQuickBtnHeight,
                     child: OutlinedButton(
                       onPressed: () => _setQtyPct(p),
                       style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        padding: EdgeInsets.zero,
                         side: BorderSide(color: pal.line),
                         foregroundColor: pal.textHi,
+                        shape: RoundedRectangleBorder(
+                            borderRadius:
+                                BorderRadius.circular(_kControlRadius)),
                       ),
                       child: Text(p == 1.0 ? 'Max' : '${(p * 100).toInt()}%',
                           style: const TextStyle(fontSize: 12)),
                     ),
                   ),
                 ),
+              ],
             ],
           ),
 
@@ -442,12 +451,14 @@ class _SandboxTradeTicketState extends State<SandboxTradeTicket> {
 
           const SizedBox(height: 14),
           SizedBox(
-            height: 48,
+            height: _kSubmitHeight,
             child: FilledButton(
               onPressed: _submitting ? null : _submit,
               style: FilledButton.styleFrom(
                 backgroundColor: accent,
                 foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(_kControlRadius)),
               ),
               child: _submitting
                   ? const SizedBox(
@@ -474,8 +485,17 @@ class _SandboxTradeTicketState extends State<SandboxTradeTicket> {
         OrderType.takeProfit => 'TP',
       };
 
+  /// Consistent dense decoration so every primary input renders at the same
+  /// height and lines up field-to-field.
+  InputDecoration _fieldDecoration(String label) => InputDecoration(
+        labelText: label,
+        isDense: true,
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      );
+
   Widget _priceField(TextEditingController c, String label) => Padding(
-        padding: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.only(bottom: _kFieldGap),
         child: TextField(
           controller: c,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
@@ -483,7 +503,7 @@ class _SandboxTradeTicketState extends State<SandboxTradeTicket> {
             setState(() {});
             _syncOrderLine();
           },
-          decoration: InputDecoration(labelText: label, isDense: true),
+          decoration: _fieldDecoration(label),
         ),
       );
 
@@ -523,11 +543,12 @@ class _Segmented<T> extends StatelessWidget {
   Widget build(BuildContext context) {
     final pal = context.nqe;
     return Container(
-      height: 38,
-      padding: const EdgeInsets.all(3),
+      height: _SandboxTradeTicketState._kControlHeight,
+      padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
         color: pal.surface2,
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(
+            _SandboxTradeTicketState._kControlRadius),
       ),
       child: Row(
         children: [
@@ -540,7 +561,8 @@ class _Segmented<T> extends StatelessWidget {
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
                     color: e.key == value ? pal.bg : Colors.transparent,
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(
+                        _SandboxTradeTicketState._kControlRadius - 3),
                     border: e.key == value
                         ? Border.all(color: pal.line)
                         : null,
@@ -584,11 +606,12 @@ class _SideButton extends StatelessWidget {
         onTap: onTap,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
-          height: 44,
+          height: _SandboxTradeTicketState._kControlHeight,
           alignment: Alignment.center,
           decoration: BoxDecoration(
             color: selected ? c : c.withOpacity(0.10),
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(
+                _SandboxTradeTicketState._kControlRadius),
             border: Border.all(
                 color: selected ? c : c.withOpacity(0.4), width: 1.4),
           ),
