@@ -286,10 +286,11 @@ class _Header extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(live ? Icons.candlestick_chart : Icons.science_outlined,
-                  size: 20, color: pal.textHi),
+              Icon(Icons.science_outlined, size: 20, color: pal.textHi),
               const SizedBox(width: 8),
-              Text(live ? 'Trading' : 'Sandbox',
+              // Always a simulation (no real orders); the badge only reflects
+              // whether the CHARTS/MARKETS data is live or simulated.
+              Text('Sandbox',
                   style: TextStyle(
                       color: pal.textHi,
                       fontSize: 18,
@@ -298,10 +299,10 @@ class _Header extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
-                  color: (live ? NqeColors.gain : pal.textLo).withOpacity(0.14),
+                  color: (live ? NqeColors.gain : pal.textLo).withOpacity(0.12),
                   borderRadius: BorderRadius.circular(5),
                 ),
-                child: Text(live ? 'LIVE DATA' : 'DEMO',
+                child: Text(live ? 'LIVE DATA' : 'SIMULATION',
                     style: TextStyle(
                         color: live ? NqeColors.gain : pal.textLo,
                         fontSize: 9,

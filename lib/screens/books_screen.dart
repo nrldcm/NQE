@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../format.dart';
 import '../models.dart';
+import '../sim/ui/sandbox_books.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
@@ -31,22 +32,28 @@ class BooksScreen extends StatelessWidget {
         listenable: appState,
         builder: (context, _) {
           final accounts = appState.accounts;
-          if (accounts.isEmpty) {
-            return EmptyState(
-              icon: Icons.account_balance_wallet_outlined,
-              title: 'No books yet',
-              subtitle: 'Create your first trading book',
-              action: FilledButton.icon(
-                onPressed: () => showAccountEditor(context),
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text('New book'),
-              ),
-            );
-          }
-          return ListView.builder(
+          return ListView(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
-            itemCount: accounts.length,
-            itemBuilder: (context, i) => _BookTile(account: accounts[i]),
+            children: [
+              // The simulation book (view-only) always sits at the top.
+              const SandboxBooksTile(),
+              if (accounts.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 24),
+                  child: EmptyState(
+                    icon: Icons.account_balance_wallet_outlined,
+                    title: 'No real books yet',
+                    subtitle: 'Create your first trading book',
+                    action: FilledButton.icon(
+                      onPressed: () => showAccountEditor(context),
+                      icon: const Icon(Icons.add, size: 18),
+                      label: const Text('New book'),
+                    ),
+                  ),
+                )
+              else
+                ...accounts.map((a) => _BookTile(account: a)),
+            ],
           );
         },
       ),
