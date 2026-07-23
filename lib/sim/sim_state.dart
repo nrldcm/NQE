@@ -105,6 +105,22 @@ class SimState extends ChangeNotifier {
         return 1 / _pxOr('USDCHF', 0.88);
       case 'PHP':
         return 1 / _pxOr('USDPHP', 57);
+      case 'SGD':
+        return 1 / _pxOr('USDSGD', 1.35);
+      case 'HKD':
+        return 1 / _pxOr('USDHKD', 7.8);
+      case 'CNH':
+        return 1 / _pxOr('USDCNH', 7.2);
+      case 'MXN':
+        return 1 / _pxOr('USDMXN', 17);
+      case 'ZAR':
+        return 1 / _pxOr('USDZAR', 18);
+      case 'TRY':
+        return 1 / _pxOr('USDTRY', 32);
+      case 'SEK':
+        return 1 / _pxOr('USDSEK', 10.5);
+      case 'NOK':
+        return 1 / _pxOr('USDNOK', 10.6);
       default:
         return 1.0;
     }
@@ -381,11 +397,11 @@ class SimState extends ChangeNotifier {
               _now()));
           break;
         case OrderType.market:
-          if (placed) {
-            _pushNotice(SimNotice(SimNoticeType.filled, 'Order filled',
-                '${o.symbol} ${_sideWord(o.side)} ${_qtyStr(o.qty)} @ ${_pxStr(o.fillPrice)}',
-                _now()));
-          }
+          // Notify on any market fill — whether placed here (placed==true) or
+          // filled on this device after syncing in from the paired one.
+          _pushNotice(SimNotice(SimNoticeType.filled, 'Order filled',
+              '${o.symbol} ${_sideWord(o.side)} ${_qtyStr(o.qty)} @ ${_pxStr(o.fillPrice)}',
+              _now()));
           break;
       }
     }
