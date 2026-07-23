@@ -144,6 +144,22 @@ class SimDb {
   Future<void> insertTrade(SimTrade t) async => (await db).insert(
       'sim_trades', t.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
 
+  /// Delete an account's whole trade blotter (used on reset), tombstoning each
+  /// row so the clear also propagates to a paired device.
+  Future<void> clearTrades(String accountId) async {
+    final d = await db;
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    final rows = await d.query('sim_trades',
+        columns: ['id'], where: 'account_id=?', whereArgs: [accountId]);
+    for (final r in rows) {
+      await d.insert(
+          'sim_tombstones',
+          {'entity': 'sim_trades', 'id': (r['id'] ?? '').toString(), 'updated_at': ts},
+          conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+    await d.delete('sim_trades', where: 'account_id=?', whereArgs: [accountId]);
+  }
+
   // ---- watchlist ----
   Future<List<SimWatch>> watch(String accountId) async {
     final rows = await (await db).query('sim_watch',

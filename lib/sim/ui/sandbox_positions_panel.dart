@@ -101,11 +101,15 @@ class _PositionTile extends StatelessWidget {
                 children: [
                   MarketBadge(pos.market, dense: true),
                   const SizedBox(width: 8),
-                  Text(pos.symbol,
-                      style: TextStyle(
-                          color: pal.textHi,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 15)),
+                  Flexible(
+                    child: Text(pos.symbol,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            color: pal.textHi,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 15)),
+                  ),
                   const SizedBox(width: 8),
                   Container(
                     padding:
@@ -124,14 +128,22 @@ class _PositionTile extends StatelessWidget {
                     ),
                   ),
                   const Spacer(),
+                  const SizedBox(width: 8),
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(simSignedMoney(pnl, currency: simState.currency),
-                          style: TextStyle(
-                              color: NqeColors.pnl(pnl),
-                              fontWeight: FontWeight.w800,
-                              fontSize: 15)),
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerRight,
+                        child: Text(
+                            simSignedMoney(pnl, currency: simState.currency),
+                            maxLines: 1,
+                            style: TextStyle(
+                                color: NqeColors.pnl(pnl),
+                                fontWeight: FontWeight.w800,
+                                fontSize: 15)),
+                      ),
                       Text(signedPctStr(roi),
                           style: TextStyle(
                               color: NqeColors.pnl(pnl),
@@ -209,14 +221,21 @@ class _PositionTile extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(k.toUpperCase(),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(
                   color: pal.textLo, fontSize: 9, letterSpacing: 0.5)),
           const SizedBox(height: 2),
-          Text(v,
-              style: TextStyle(
-                  color: color ?? pal.textHi,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700)),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(v,
+                maxLines: 1,
+                style: TextStyle(
+                    color: color ?? pal.textHi,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700)),
+          ),
         ],
       ),
     );

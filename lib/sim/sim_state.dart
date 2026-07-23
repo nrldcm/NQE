@@ -311,7 +311,10 @@ class SimState extends ChangeNotifier {
       }
       _pf = SimPortfolio(account: acc);
       await _db.upsertAccount(acc);
-      trades = await _db.trades(acc.id); // history kept; clear if desired
+      // Clear the blotter too, so the Overview (fees, trade count, win rate)
+      // matches the restored balance instead of showing pre-reset history.
+      await _db.clearTrades(acc.id);
+      trades = [];
     });
     _pushNotice(const SimNotice(
         SimNoticeType.info, 'Sandbox reset', 'Balance restored to starting cash.',

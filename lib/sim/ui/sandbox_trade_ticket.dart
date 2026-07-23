@@ -45,6 +45,21 @@ class _SandboxTradeTicketState extends State<SandboxTradeTicket> {
   double get _last => simState.priceOf(widget.symbol);
   double get _qty => double.tryParse(_qtyCtrl.text.trim()) ?? 0;
 
+  /// Signed quantity currently held for this symbol in the active mode
+  /// (+ long, − short, 0 none). Drives the "you hold" read-out and the
+  /// naked-sell guard in spot.
+  double get _holdingQty {
+    for (final p in simState.positions) {
+      if (p.symbol == widget.symbol && p.mode == _mode) {
+        return p.side == PositionSide.long ? p.qty : -p.qty;
+      }
+    }
+    return 0;
+  }
+
+  /// In spot you can only sell what you hold; margin can open a short.
+  bool get _canSell => _mode == TradeMode.margin || _holdingQty > 0;
+
   @override
   void dispose() {
     _qtyCtrl.dispose();
@@ -214,7 +229,24 @@ class _SandboxTradeTicketState extends State<SandboxTradeTicket> {
               ),
             ],
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 8),
+          // Current holding for this symbol — makes it clear you can't sell
+          // what you don't own (in spot).
+          Row(
+            children: [
+              Icon(Icons.account_balance_wallet_outlined,
+                  size: 13, color: pal.textLo),
+              const SizedBox(width: 6),
+              Text(
+                _holdingQty == 0
+                    ? 'You hold: none'
+                    : 'You hold: ${fmtQty(_holdingQty.abs())} ${widget.symbol}'
+                        '${_holdingQty < 0 ? ' (short)' : ''}',
+                style: TextStyle(color: pal.textLo, fontSize: 12),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
 
           // Spot / Margin
           if (simState.account?.marginEnabled ?? true)
@@ -223,8 +255,12 @@ class _SandboxTradeTicketState extends State<SandboxTradeTicket> {
               items: const {TradeMode.spot: 'Spot', TradeMode.margin: 'Margin'},
               onChanged: (m) => setState(() {
                 _mode = m;
-                if (m == TradeMode.spot && _side == OrderSide.sell) {
-                  // spot sell = close; keep as-is but reset type sanity
+                // Spot can't naked-sell — if you're on Sell with nothing held,
+                // flip back to Buy so the UI stays consistent.
+                if (m == TradeMode.spot &&
+                    _side == OrderSide.sell &&
+                    _holdingQty <= 0) {
+                  _side = OrderSide.buy;
                 }
               }),
             ),
@@ -247,7 +283,15 @@ class _SandboxTradeTicketState extends State<SandboxTradeTicket> {
                   label: _mode == TradeMode.margin ? 'Sell / Short' : 'Sell',
                   color: NqeColors.loss,
                   selected: !buy,
-                  onTap: () => setState(() => _side = OrderSide.sell),
+                  enabled: _canSell,
+                  onTap: () {
+                    if (!_canSell) {
+                      _toast('Buy first — in Spot you can only sell what you hold.',
+                          error: true);
+                      return;
+                    }
+                    setState(() => _side = OrderSide.sell);
+                  },
                 ),
               ),
             ],
@@ -412,11 +456,17 @@ class _SandboxTradeTicketState extends State<SandboxTradeTicket> {
         children: [
           Text(k, style: TextStyle(color: pal.textLo, fontSize: 12)),
           const Spacer(),
-          Text(v,
-              style: TextStyle(
-                  color: color ?? pal.textHi,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700)),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(v,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.right,
+                style: TextStyle(
+                    color: color ?? pal.textHi,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700)),
+          ),
         ],
       ),
     );
@@ -477,33 +527,39 @@ class _SideButton extends StatelessWidget {
   final String label;
   final Color color;
   final bool selected;
+  final bool enabled;
   final VoidCallback onTap;
   const _SideButton(
       {required this.label,
       required this.color,
       required this.selected,
-      required this.onTap});
+      required this.onTap,
+      this.enabled = true});
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        height: 44,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: selected ? color : color.withOpacity(0.10),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-              color: selected ? color : color.withOpacity(0.4), width: 1.4),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: selected ? Colors.white : color,
-            fontWeight: FontWeight.w800,
-            fontSize: 14,
+    final c = enabled ? color : color.withOpacity(0.35);
+    return Opacity(
+      opacity: enabled ? 1 : 0.55,
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          height: 44,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: selected ? c : c.withOpacity(0.10),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+                color: selected ? c : c.withOpacity(0.4), width: 1.4),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              color: selected ? Colors.white : c,
+              fontWeight: FontWeight.w800,
+              fontSize: 14,
+            ),
           ),
         ),
       ),
