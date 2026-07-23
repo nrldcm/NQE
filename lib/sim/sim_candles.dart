@@ -103,6 +103,9 @@ class CandleStore {
     _cache.removeWhere((k, _) => k.startsWith('${symbol.toUpperCase()}|'));
   }
 
+  /// Drop every cached series (e.g. on a global live↔simulated feed switch).
+  void clearAll() => _cache.clear();
+
   int _bucketNow(Timeframe tf) {
     final now = DateTime.now().millisecondsSinceEpoch;
     return (now ~/ tf.bucketMs) * tf.bucketMs;

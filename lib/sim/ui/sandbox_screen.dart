@@ -216,7 +216,7 @@ class _SandboxScreenState extends State<SandboxScreen>
               VerticalDivider(width: 1, color: pal.line),
               // Center — chart + book
               Expanded(
-                child: Padding(
+                child: SingleChildScrollView(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -229,7 +229,11 @@ class _SandboxScreenState extends State<SandboxScreen>
                             symbol: _symbol, market: _market, height: 300),
                       ),
                       const SizedBox(height: 12),
-                      Expanded(
+                      // Bounded height so it scrolls within the (now scrollable)
+                      // column instead of overflowing when indicators grow the
+                      // chart.
+                      SizedBox(
+                        height: 420,
                         child: SandboxPositionsPanel(onSelect: _select),
                       ),
                     ],

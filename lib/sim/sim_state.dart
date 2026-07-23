@@ -297,18 +297,22 @@ class SimState extends ChangeNotifier {
   Future<void> resetAccount() async {
     final acc = _pf?.account;
     if (acc == null) return;
-    acc.cash = acc.startingCash;
-    acc.realizedPnl = 0;
-    acc.updatedAtMs = _now();
-    for (final p in List<SimPosition>.from(positions)) {
-      await _db.deletePosition(p.id);
-    }
-    for (final o in List<SimOrder>.from(openOrders)) {
-      await _db.deleteOrder(o.id);
-    }
-    _pf = SimPortfolio(account: acc);
-    await _db.upsertAccount(acc);
-    trades = await _db.trades(acc.id); // history kept; clear if desired
+    // Serialize with engine persists/reloads so a concurrent tick can't
+    // re-upsert a position that reset just deleted.
+    await _serial(() async {
+      acc.cash = acc.startingCash;
+      acc.realizedPnl = 0;
+      acc.updatedAtMs = _now();
+      for (final p in List<SimPosition>.from(positions)) {
+        await _db.deletePosition(p.id);
+      }
+      for (final o in List<SimOrder>.from(openOrders)) {
+        await _db.deleteOrder(o.id);
+      }
+      _pf = SimPortfolio(account: acc);
+      await _db.upsertAccount(acc);
+      trades = await _db.trades(acc.id); // history kept; clear if desired
+    });
     _pushNotice(const SimNotice(
         SimNoticeType.info, 'Sandbox reset', 'Balance restored to starting cash.',
         0));
@@ -340,6 +344,9 @@ class SimState extends ChangeNotifier {
 
   void setFeedMode(FeedMode mode) {
     price.mode = mode;
+    // Regenerate candles against the newly-active feed (so stale live klines
+    // don't linger after switching to Simulated, and vice-versa).
+    candles.clearAll();
     notifyListeners();
   }
 

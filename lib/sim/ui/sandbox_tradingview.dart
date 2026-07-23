@@ -67,6 +67,7 @@ class SandboxTradingViewChart extends StatefulWidget {
 class _SandboxTradingViewChartState extends State<SandboxTradingViewChart> {
   WebViewController? _controller;
   bool _dark = true;
+  bool _loaded = false;
 
   @override
   void initState() {
@@ -81,8 +82,10 @@ class _SandboxTradingViewChartState extends State<SandboxTradingViewChart> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     final dark = Theme.of(context).brightness == Brightness.dark;
-    if (dark != _dark || _controller?.currentUrl == null) {
+    // Load once on first mount, and reload only when the theme actually flips.
+    if (!_loaded || dark != _dark) {
       _dark = dark;
+      _loaded = true;
       _load();
     }
   }
