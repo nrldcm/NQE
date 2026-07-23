@@ -133,6 +133,56 @@ class Cashflow {
       );
 }
 
+/// A row in the Monthly Performance tracker (manually entered): the balance at
+/// the start and end of a month, and the net wire-out (withdrawal +, deposit −)
+/// for that month. P&L / % change / TWR / drawdown are all derived, not stored.
+class PerfMonth {
+  String id;
+  String title; // free label, e.g. "January 2024" or "July (2nd half)"
+  int sortKey; // ordering, e.g. yyyymm*100 + slot (lower = earlier)
+  double startBal;
+  double endBal;
+  double wireOut; // + = withdrawal (out), − = deposit (in)
+  String note;
+  String createdAt;
+
+  PerfMonth({
+    required this.id,
+    this.title = '',
+    this.sortKey = 0,
+    this.startBal = 0,
+    this.endBal = 0,
+    this.wireOut = 0,
+    this.note = '',
+    required this.createdAt,
+  });
+
+  double get pnl => endBal - startBal;
+  double get pctChange => startBal == 0 ? 0 : (endBal - startBal) / startBal * 100;
+
+  Map<String, Object?> toMap() => {
+        'id': id,
+        'title': title,
+        'sort_key': sortKey,
+        'start_bal': _fin(startBal),
+        'end_bal': _fin(endBal),
+        'wire_out': _fin(wireOut),
+        'note': note,
+        'created_at': createdAt,
+      };
+
+  factory PerfMonth.fromMap(Map<String, Object?> m) => PerfMonth(
+        id: _s(m['id']),
+        title: _s(m['title']),
+        sortKey: (m['sort_key'] as num?)?.toInt() ?? 0,
+        startBal: _d(m['start_bal']),
+        endBal: _d(m['end_bal']),
+        wireOut: _d(m['wire_out']),
+        note: _s(m['note']),
+        createdAt: _s(m['created_at']),
+      );
+}
+
 class Trade {
   String id;
   String accountId;

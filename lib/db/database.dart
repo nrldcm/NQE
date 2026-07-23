@@ -11,7 +11,7 @@ import '../models.dart';
 /// sqflite on-disk schema version. Bumped to 3 for LAN sync change-tracking
 /// (nullable `updated_at` columns + `sync_tombstones`). Kept local to the DB
 /// layer so the export/import model version (`kSchemaVersion`) is untouched.
-const int _kDbSchemaVersion = 3;
+const int _kDbSchemaVersion = 4;
 
 /// Tables that participate in LAN sync (each has an `id` PK and an `updated_at`
 /// change marker, and generates a tombstone on delete). `api_keys` is device-
@@ -22,6 +22,7 @@ const List<String> kSyncTables = <String>[
   'trades',
   'dividends',
   'holdings',
+  'perf_months',
 ];
 
 class LedgerDb {
@@ -144,6 +145,16 @@ class LedgerDb {
         service TEXT NOT NULL DEFAULT '', secret_enc TEXT NOT NULL DEFAULT '',
         hint TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
       )''');
+    // v4: Monthly Performance tracker (manual monthly balances). Syncs like the
+    // other ledger tables.
+    batch.execute('''
+      CREATE TABLE IF NOT EXISTS perf_months (
+        id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '',
+        sort_key INTEGER NOT NULL DEFAULT 0,
+        start_bal REAL NOT NULL DEFAULT 0, end_bal REAL NOT NULL DEFAULT 0,
+        wire_out REAL NOT NULL DEFAULT 0, note TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL, updated_at TEXT
+      )''');
     // v3: LAN sync tombstones. A hard-deleted syncable row leaves a marker here
     // so the delete can propagate to peers (and be superseded by a newer
     // restore). Not exposed to normal ledger queries.
@@ -217,6 +228,26 @@ class LedgerDb {
     final d = await db;
     await d.delete('cashflows', where: 'id = ?', whereArgs: [id]);
     await _tombstone(d, 'cashflows', id);
+  }
+
+  // ---- Monthly performance --------------------------------------------------
+  Future<List<PerfMonth>> perfMonths() async {
+    final d = await db;
+    final rows =
+        await d.query('perf_months', orderBy: 'sort_key, created_at');
+    return rows.map(PerfMonth.fromMap).toList();
+  }
+
+  Future<void> upsertPerfMonth(PerfMonth m) async {
+    final d = await db;
+    await d.insert('perf_months', m.toMap()..['updated_at'] = _now(),
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> deletePerfMonth(String id) async {
+    final d = await db;
+    await d.delete('perf_months', where: 'id = ?', whereArgs: [id]);
+    await _tombstone(d, 'perf_months', id);
   }
 
   // ---- Trades ---------------------------------------------------------------

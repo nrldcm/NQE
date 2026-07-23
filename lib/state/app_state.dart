@@ -15,6 +15,7 @@ class AppState extends ChangeNotifier {
 
   bool loading = true;
   List<Account> accounts = [];
+  List<PerfMonth> perfMonths = [];
   final Map<String, AccountMetrics> _metrics = {};
 
   double totalAumPhp = 0;
@@ -32,6 +33,7 @@ class AppState extends ChangeNotifier {
     notifyListeners();
 
     accounts = await _db.accounts();
+    perfMonths = await _db.perfMonths();
     _metrics.clear();
     double aum = 0, realized = 0;
     int closed = 0, wins = 0;
@@ -53,6 +55,19 @@ class AppState extends ChangeNotifier {
     totalClosedTrades = closed;
     totalWins = wins;
     loading = false;
+    notifyListeners();
+  }
+
+  // ---- Monthly performance --------------------------------------------------
+  Future<void> savePerfMonth(PerfMonth m) async {
+    await _db.upsertPerfMonth(m);
+    perfMonths = await _db.perfMonths();
+    notifyListeners();
+  }
+
+  Future<void> deletePerfMonth(String id) async {
+    await _db.deletePerfMonth(id);
+    perfMonths = await _db.perfMonths();
     notifyListeners();
   }
 }

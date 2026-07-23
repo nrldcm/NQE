@@ -10,6 +10,7 @@ import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/charts.dart';
 import '../widgets/common.dart';
+import 'performance_screen.dart';
 
 class StatsScreen extends StatefulWidget {
   const StatsScreen({super.key});
@@ -45,7 +46,17 @@ class _StatsScreenState extends State<StatsScreen> {
     final pal = context.nqe;
     return Scaffold(
       backgroundColor: pal.bg,
-      appBar: AppBar(title: const Text('Statistics')),
+      appBar: AppBar(
+        title: const Text('Statistics'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.calendar_month_outlined),
+            tooltip: 'Monthly Performance',
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => const PerformanceScreen())),
+          ),
+        ],
+      ),
       body: ListenableBuilder(
         listenable: appState,
         builder: (context, _) {
