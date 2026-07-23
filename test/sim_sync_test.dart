@@ -155,6 +155,32 @@ void main() {
     expect(await row(phone, 'sim_orders', 'ord-filled'), isNotNull);
   });
 
+  test('a desktop wallet command (intent) forwards to the authority', () async {
+    final phone = await freshDevice();
+    final desktop = await freshDevice();
+
+    // Desktop queues a top-up command (it can't mutate the shared account
+    // itself — that would fight the phone's copy).
+    await (await desktop.db).insert('sim_intents', {
+      'id': 'intent1',
+      'account_id': 'acc1',
+      'kind': 'topup',
+      'amount': 50000.0,
+      'created_at': 10,
+      'updated_at': 10,
+    });
+
+    final fromDesktop = await SimSyncRepo.instance.buildAll(db: desktop);
+    await SimSyncRepo.instance
+        .applyRemote(fromDesktop, asFollower: false, db: phone);
+
+    // The command reached the phone, where its engine will apply + clear it.
+    final intent = await row(phone, 'sim_intents', 'intent1');
+    expect(intent, isNotNull);
+    expect(intent!['kind'], 'topup');
+    expect(intent['amount'], 50000.0);
+  });
+
   test('follower applies an authority tombstone (closed position propagates)',
       () async {
     final phone = await freshDevice();

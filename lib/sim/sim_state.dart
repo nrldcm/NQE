@@ -242,7 +242,51 @@ class SimState extends ChangeNotifier {
   /// in-memory portfolio reflects them (and, on the authority, newly-synced
   /// orders enter the engine loop). Runs on the serial queue, so it never
   /// races a pending persist.
-  Future<void> onRemoteSimApplied() => _serial(_reloadFromDb);
+  Future<void> onRemoteSimApplied() async {
+    await _serial(_reloadFromDb);
+    // The phone (authority) applies any wallet/reset commands the desktop
+    // forwarded, against its single source-of-truth account, then tombstones
+    // them — so a desktop top-up actually lands and echoes back.
+    if (!mirror) await _serial(_processIntents);
+  }
+
+  /// Apply and clear queued desktop commands (top-up / cash-out / reset).
+  /// Authority-only; runs inside the serial queue (no nested _serial here).
+  Future<void> _processIntents() async {
+    final acc = _pf?.account;
+    if (acc == null) return;
+    final rows = await _db.intentRows();
+    if (rows.isEmpty) return;
+    for (final r in rows) {
+      final kind = (r['kind'] ?? '').toString();
+      final amount =
+          (r['amount'] is num) ? (r['amount'] as num).toDouble() : 0.0;
+      switch (kind) {
+        case 'topup':
+          if (amount > 0) await _applyTopUp(acc, amount);
+        case 'cashout':
+          if (amount > 0) await _applyCashOut(acc, amount);
+        case 'reset':
+          await _resetCore(acc);
+      }
+      await _db.deleteIntent((r['id'] ?? '').toString());
+    }
+    notifyListeners();
+  }
+
+  /// Queue a wallet/reset command for the phone to apply (desktop mirror path).
+  Future<void> _forwardIntent(String kind, double amount) async {
+    final accId = _pf?.account.id ?? kDefaultAccountId;
+    await _serial(() => _db.insertIntent({
+          'id': uid(),
+          'account_id': accId,
+          'kind': kind,
+          'amount': amount,
+          'created_at': _now(),
+          'updated_at': _now(),
+        }));
+    notifyListeners(); // trigger a sync push to the phone
+  }
 
   Future<void> _reloadFromDb() async {
     final accounts = await _db.accounts();
@@ -321,29 +365,35 @@ class SimState extends ChangeNotifier {
   Future<void> resetAccount() async {
     final acc = _pf?.account;
     if (acc == null) return;
+    // On the desktop mirror, forward the command to the phone (source of
+    // truth) instead of mutating our own copy.
+    if (mirror) return _forwardIntent('reset', 0);
     // Serialize with engine persists/reloads so a concurrent tick can't
     // re-upsert a position that reset just deleted.
-    await _serial(() async {
-      acc.cash = acc.startingCash;
-      acc.realizedPnl = 0;
-      acc.updatedAtMs = _now();
-      for (final p in List<SimPosition>.from(positions)) {
-        await _db.deletePosition(p.id);
-      }
-      // Clear ALL orders — open AND filled/closed history — not just the ones
-      // currently open, so a reset truly wipes the sandbox order history.
-      await _db.clearOrders(acc.id);
-      _pf = SimPortfolio(account: acc);
-      await _db.upsertAccount(acc);
-      // Clear the blotter too, so the Overview (fees, trade count, win rate)
-      // matches the restored balance instead of showing pre-reset history.
-      await _db.clearTrades(acc.id);
-      trades = [];
-    });
+    await _serial(() => _resetCore(acc));
     _pushNotice(const SimNotice(
         SimNoticeType.info, 'Sandbox reset', 'Balance restored to starting cash.',
         0));
     notifyListeners();
+  }
+
+  /// The reset itself (no _serial — call inside a serial task).
+  Future<void> _resetCore(SimAccount acc) async {
+    acc.cash = acc.startingCash;
+    acc.realizedPnl = 0;
+    acc.updatedAtMs = _now();
+    for (final p in List<SimPosition>.from(positions)) {
+      await _db.deletePosition(p.id);
+    }
+    // Clear ALL orders — open AND filled/closed history — not just the ones
+    // currently open, so a reset truly wipes the sandbox order history.
+    await _db.clearOrders(acc.id);
+    _pf = SimPortfolio(account: acc);
+    await _db.upsertAccount(acc);
+    // Clear the blotter too, so the Overview (fees, trade count, win rate)
+    // matches the restored balance instead of showing pre-reset history.
+    await _db.clearTrades(acc.id);
+    trades = [];
   }
 
   /// Wallet top-up: add virtual cash to Free Cash. The deposit basis
@@ -352,15 +402,18 @@ class SimState extends ChangeNotifier {
   Future<void> topUp(double amount) async {
     final acc = _pf?.account;
     if (acc == null || !amount.isFinite || amount <= 0) return;
-    await _serial(() async {
-      acc.cash += amount;
-      acc.startingCash += amount;
-      acc.updatedAtMs = _now();
-      await _db.upsertAccount(acc);
-    });
+    if (mirror) return _forwardIntent('topup', amount);
+    await _serial(() => _applyTopUp(acc, amount));
     _pushNotice(SimNotice(SimNoticeType.info, 'Wallet topped up',
         'Added ${money(amount, currency: currency)} to Free Cash.', _now()));
     notifyListeners();
+  }
+
+  Future<void> _applyTopUp(SimAccount acc, double amount) async {
+    acc.cash += amount;
+    acc.startingCash += amount;
+    acc.updatedAtMs = _now();
+    await _db.upsertAccount(acc);
   }
 
   /// Wallet cash-out: withdraw from Free Cash. Capped at the available Free
@@ -370,17 +423,25 @@ class SimState extends ChangeNotifier {
   Future<bool> cashOut(double amount) async {
     final acc = _pf?.account;
     if (acc == null || !amount.isFinite || amount <= 0) return false;
-    if (amount > acc.cash) return false;
-    await _serial(() async {
-      acc.cash -= amount;
-      acc.startingCash = (acc.startingCash - amount).clamp(0, double.infinity);
-      acc.updatedAtMs = _now();
-      await _db.upsertAccount(acc);
-    });
+    if (amount > acc.cash) return false; // guard against the mirrored balance
+    if (mirror) {
+      await _forwardIntent('cashout', amount);
+      return true;
+    }
+    await _serial(() => _applyCashOut(acc, amount));
     _pushNotice(SimNotice(SimNoticeType.info, 'Cashed out',
         'Withdrew ${money(amount, currency: currency)} from Free Cash.',
         _now()));
     notifyListeners();
+    return true;
+  }
+
+  Future<bool> _applyCashOut(SimAccount acc, double amount) async {
+    if (amount > acc.cash) return false;
+    acc.cash -= amount;
+    acc.startingCash = (acc.startingCash - amount).clamp(0, double.infinity);
+    acc.updatedAtMs = _now();
+    await _db.upsertAccount(acc);
     return true;
   }
 

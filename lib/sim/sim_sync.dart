@@ -17,6 +17,7 @@ const List<String> kSimTables = [
   'sim_orders',
   'sim_trades',
   'sim_watch',
+  'sim_intents',
 ];
 
 /// The change-stamp column for each table (integer ms).
@@ -26,6 +27,7 @@ const Map<String, String> _stampCol = {
   'sim_orders': 'updated_at',
   'sim_trades': 'ts',
   'sim_watch': 'added_at',
+  'sim_intents': 'updated_at',
 };
 
 class SimSyncRepo {

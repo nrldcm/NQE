@@ -39,10 +39,12 @@ class SimDb {
   static Future<Database> openAtPath(String path) {
     return openDatabase(
       path,
-      version: 2,
+      version: 3,
       onConfigure: (d) async => d.execute('PRAGMA foreign_keys = ON'),
       onCreate: (d, _) async => _create(d),
       onUpgrade: (d, _, __) async {
+        // _create is all IF NOT EXISTS, so it back-fills newly-added tables
+        // (v3: sim_intents) on an existing install.
         await _create(d);
         // v2: change-tracking columns + tombstones for cross-device sync.
         try {
@@ -80,6 +82,14 @@ class SimDb {
       CREATE TABLE IF NOT EXISTS sim_watch(
         id TEXT PRIMARY KEY, account_id TEXT, symbol TEXT, market INTEGER,
         added_at INTEGER)''');
+    // Command queue: the desktop mirror can't mutate the shared account itself
+    // (that would fight the phone's authoritative copy), so a wallet top-up /
+    // cash-out / reset is written here as an intent, synced to the phone, which
+    // applies it to its single source-of-truth account and tombstones it.
+    await d.execute('''
+      CREATE TABLE IF NOT EXISTS sim_intents(
+        id TEXT PRIMARY KEY, account_id TEXT, kind TEXT, amount REAL,
+        created_at INTEGER, updated_at INTEGER)''');
     // Deletions are recorded so a closed position / cancelled order propagates
     // across paired devices (last-writer-wins with the live rows).
     await d.execute('''
@@ -206,6 +216,16 @@ class SimDb {
       'sim_watch', w.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
 
   Future<void> deleteWatch(String id) async => _deleteWithTomb('sim_watch', id);
+
+  // ---- intents (desktop → phone command queue) ----
+  Future<void> insertIntent(Map<String, Object?> row) async => (await db)
+      .insert('sim_intents', row, conflictAlgorithm: ConflictAlgorithm.replace);
+
+  Future<List<Map<String, Object?>>> intentRows() async =>
+      (await db).query('sim_intents', orderBy: 'created_at');
+
+  Future<void> deleteIntent(String id) async =>
+      _deleteWithTomb('sim_intents', id);
 
   // ---- sync support (tombstones + raw access) ----
   Future<void> _deleteWithTomb(String table, String id) async {
