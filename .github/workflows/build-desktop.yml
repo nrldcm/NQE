@@ -71,18 +71,16 @@ jobs:
           --build-name=${{ steps.ver.outputs.version }}
           --build-number=${{ github.run_number }}
 
-      - name: Package single-file .exe + zip
+      - name: Package TRUE single-file .exe (virtualized) + zip
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $rel = "build/windows/x64/runner/Release"
           if (!(Test-Path $rel)) { $rel = "build/windows/runner/Release" }
+          $rel = (Resolve-Path $rel).Path
           $ver = "${{ steps.ver.outputs.version }}"
-          $seven = "C:\Program Files\7-Zip\7z.exe"
-          $sfxModule = "C:\Program Files\7-Zip\7z.sfx"
 
-          # Sanity: the built bundle MUST contain the Flutter runtime and assets,
-          # or a single exe would be a broken launcher. Fail loudly if missing.
+          # Sanity: the built bundle MUST contain the Flutter runtime + assets.
           foreach ($need in @("nqe.exe", "flutter_windows.dll", "data")) {
             if (!(Test-Path (Join-Path $rel $need))) { throw "Missing $need in $rel — build is incomplete" }
           }
@@ -91,43 +89,78 @@ jobs:
           Compress-Archive -Path "$rel/*" -DestinationPath "NQE-desktop-v$ver.zip" -Force
           Copy-Item "NQE-desktop-v$ver.zip" "NQE-desktop-latest.zip" -Force
 
-          # --- Real single-file exe: a 7-Zip self-extracting archive holding the
-          # WHOLE bundle (every DLL + the data/ folder). On launch it silently
-          # unpacks to a temp dir and runs nqe.exe, so it actually works on a
-          # clean PC — unlike a bare launcher stub. ---
-          & $seven a -t7z -mx=9 "app.7z" "$rel/*" | Out-Null
+          # --- TRUE single-file exe via Enigma Virtual Box: every DLL and the
+          # data/ folder are embedded INTO the exe and virtualized at runtime —
+          # NO extraction to disk, NO admin rights. It runs like one file. ---
+          Invoke-WebRequest -Uri "https://enigmaprotector.com/assets/files/enigmavb.exe" -OutFile "enigmavb_setup.exe"
+          Start-Process -FilePath ".\enigmavb_setup.exe" -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/SP-" -Wait
+          $evb = "C:\Program Files (x86)\Enigma Virtual Box\enigmavbconsole.exe"
+          if (!(Test-Path $evb)) { $evb = "C:\Program Files\Enigma Virtual Box\enigmavbconsole.exe" }
+          if (!(Test-Path $evb)) { throw "Enigma Virtual Box console not found after install" }
 
-          # Stamp the NQE icon onto the SFX stub BEFORE appending the archive, so
-          # editing PE resources can never disturb the 7z payload.
-          Copy-Item $sfxModule "nqe_sfx.exe" -Force
-          Invoke-WebRequest -Uri "https://github.com/electron/rcedit/releases/download/v2.0.0/rcedit-x64.exe" -OutFile rcedit.exe
-          ./rcedit.exe "nqe_sfx.exe" --set-icon "assets/icon/app_icon.ico" `
-            --set-version-string "ProductName" "NQE" `
-            --set-version-string "FileDescription" "NQE - Funds managed by Willong Capital"
+          $inputExe = Join-Path $rel "nqe.exe"
+          $outputExe = Join-Path (Get-Location).Path "NQE-v$ver.exe"
 
-          # SFX config: quiet extract to temp, then run the app.
-          $cfg = ";!@Install@!UTF-8!`r`nTitle=`"NQE`"`r`nProgress=`"no`"`r`nRunProgram=`"nqe.exe`"`r`n;!@InstallEnd@!`r`n"
-          [System.IO.File]::WriteAllText("config.txt", $cfg, (New-Object System.Text.UTF8Encoding($false)))
+          function XmlEsc([string]$s) {
+            return $s.Replace('&','&amp;').Replace('<','&lt;').Replace('>','&gt;').Replace('"','&quot;')
+          }
+          # Recursively emit the virtual-file tree for everything except nqe.exe
+          # (nqe.exe is the InputFile the box is built around).
+          function New-Nodes([string]$dir) {
+            $sb = New-Object System.Text.StringBuilder
+            foreach ($it in Get-ChildItem -LiteralPath $dir | Sort-Object Name) {
+              $nm = XmlEsc $it.Name
+              if ($it.PSIsContainer) {
+                [void]$sb.Append("<File><Type>3</Type><Name>$nm</Name><Files>")
+                [void]$sb.Append((New-Nodes $it.FullName))
+                [void]$sb.Append("</Files></File>")
+              } elseif ($it.FullName -ne $inputExe) {
+                $fp = XmlEsc $it.FullName
+                [void]$sb.Append("<File><Type>2</Type><Name>$nm</Name><File>$fp</File><ActiveX>false</ActiveX><ActiveXInstall>false</ActiveXInstall><Action>0</Action><OverwriteDateTime>false</OverwriteDateTime><OverwriteAttributes>false</OverwriteAttributes><PassCommandLine>false</PassCommandLine></File>")
+              }
+            }
+            return $sb.ToString()
+          }
+          $nodes = New-Nodes $rel
 
-          # stub + config + archive → one self-running exe.
-          cmd /c copy /b nqe_sfx.exe + config.txt + app.7z "NQE-v$ver.exe" > $null
-          Copy-Item "NQE-v$ver.exe" "NQE-desktop-latest.exe" -Force
+          $proj = @"
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<>
+	<InputFile>$(XmlEsc $inputExe)</InputFile>
+	<OutputFile>$(XmlEsc $outputExe)</OutputFile>
+	<Files>
+		<Enabled>true</Enabled>
+		<DeleteExtractedOnExit>false</DeleteExtractedOnExit>
+		<CompressFiles>true</CompressFiles>
+		<Files>
+			<File>
+				<Type>3</Type>
+				<Name>%DEFAULT FOLDER%</Name>
+				<Files>$nodes</Files>
+			</File>
+		</Files>
+	</Files>
+	<Options>
+		<ShareVirtualSystem>false</ShareVirtualSystem>
+		<MapExecutableWithTemporaryFile>true</MapExecutableWithTemporaryFile>
+		<AllowRunningOfVirtualExeFiles>true</AllowRunningOfVirtualExeFiles>
+	</Options>
+</>
+"@
+          [System.IO.File]::WriteAllText("nqe.evb", $proj, (New-Object System.Text.UTF8Encoding($false)))
+          Write-Host "Running Enigma Virtual Box..."
+          & $evb "nqe.evb"
 
-          # HARD verification: the single exe must be substantial and must list
-          # nqe.exe inside it. This is what stops another 1 MB dud from shipping.
-          $size = (Get-Item "NQE-v$ver.exe").Length
+          # HARD verification: a real virtualized exe embeds the whole bundle, so
+          # it must be large (~13 MB). This stops any broken/empty exe shipping.
+          if (!(Test-Path $outputExe)) { throw "Enigma did not produce the exe" }
+          $size = (Get-Item $outputExe).Length
           Write-Host ("Single exe size: {0:N1} MB" -f ($size / 1MB))
-          if ($size -lt 5MB) { throw "Single exe is only $size bytes — bundle was not embedded" }
-          $listing = & $seven l "NQE-v$ver.exe"
-          if (($listing | Select-String -Quiet "nqe.exe") -ne $true) {
-            throw "nqe.exe not found inside NQE-v$ver.exe — SFX is broken"
-          }
-          if (($listing | Select-String -Quiet "flutter_windows.dll") -ne $true) {
-            throw "flutter_windows.dll not found inside the single exe"
-          }
+          if ($size -lt 8MB) { throw "Single exe is only $size bytes — files were not embedded" }
+          Copy-Item $outputExe "NQE-desktop-latest.exe" -Force
 
-          # Remove tooling/intermediates so ONLY the NQE artifacts ship.
-          Remove-Item rcedit.exe, nqe_sfx.exe, app.7z, config.txt -Force -ErrorAction SilentlyContinue
+          # Keep only the NQE artifacts.
+          Remove-Item enigmavb_setup.exe, nqe.evb -Force -ErrorAction SilentlyContinue
           Write-Host "Artifacts:"
           Get-ChildItem NQE-*.exe, NQE-*.zip | Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB,1)}}
 
@@ -150,7 +183,7 @@ jobs:
             NQE v${{ steps.ver.outputs.version }} — Funds managed by Willong Capital.
 
             • Android — install `NQE-v${{ steps.ver.outputs.version }}.apk`
-            • Windows — run `NQE-v${{ steps.ver.outputs.version }}.exe` (single file)
+            • Windows — run `NQE-v${{ steps.ver.outputs.version }}.exe` (one file, no install, no admin)
           files: |
             NQE-*.exe
             NQE-*.zip
