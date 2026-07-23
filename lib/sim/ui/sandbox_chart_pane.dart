@@ -1,14 +1,18 @@
-// Chart pane for the Sandbox: switches between the real TradingView chart
-// (mobile, live market data + their full toolset) and the built-in candlestick
-// chart (offline + mirrors the simulated feed and your sandbox trades).
+// Chart pane for the Sandbox. The chart ALWAYS matches the fill engine, so an
+// order "hits" exactly when the price you see crosses it:
+//   * Simulated feed → the built-in candlestick chart, whose right edge is the
+//     simulated engine price (the same price orders fill against);
+//   * Live feed + crypto → the real TradingView chart, and the engine fills
+//     against the same live Binance price.
+// The Live/Simulated pill (in the header) is the single control.
 import 'package:flutter/material.dart';
 
-import '../../theme.dart';
 import '../sim_models.dart';
+import '../sim_state.dart';
 import 'sandbox_candle_chart.dart';
 import 'sandbox_tradingview.dart';
 
-class SandboxChartPane extends StatefulWidget {
+class SandboxChartPane extends StatelessWidget {
   final String symbol;
   final SimMarket market;
   final double height;
@@ -20,73 +24,21 @@ class SandboxChartPane extends StatefulWidget {
   });
 
   @override
-  State<SandboxChartPane> createState() => _SandboxChartPaneState();
-}
-
-class _SandboxChartPaneState extends State<SandboxChartPane> {
-  // Prefer the richer TradingView chart where it's supported (mobile).
-  late bool _tv = tradingViewSupported;
-
-  @override
   Widget build(BuildContext context) {
-    final pal = context.nqe;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (tradingViewSupported)
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Container(
-              height: 30,
-              padding: const EdgeInsets.all(3),
-              decoration: BoxDecoration(
-                color: pal.surface2,
-                borderRadius: BorderRadius.circular(9),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _seg('TradingView', _tv, () => setState(() => _tv = true)),
-                  _seg('Built-in', !_tv, () => setState(() => _tv = false)),
-                ],
-              ),
-            ),
-          ),
-        if (tradingViewSupported) const SizedBox(height: 8),
-        if (_tv && tradingViewSupported)
-          // Match the built-in chart's overall footprint (chart + OHLC bar +
-          // timeframe row) so switching modes doesn't resize the card.
-          SandboxTradingViewChart(
-              symbol: widget.symbol, height: widget.height + 62)
-        else
-          SandboxCandleChart(
-              symbol: widget.symbol,
-              market: widget.market,
-              height: widget.height),
-      ],
-    );
-  }
-
-  Widget _seg(String label, bool active, VoidCallback onTap) {
-    final pal = context.nqe;
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: active ? pal.bg : Colors.transparent,
-          borderRadius: BorderRadius.circular(7),
-          border: active ? Border.all(color: pal.line) : null,
-        ),
-        child: Text(label,
-            style: TextStyle(
-                color: active ? pal.textHi : pal.textLo,
-                fontSize: 12,
-                fontWeight: FontWeight.w700)),
-      ),
+    return ListenableBuilder(
+      listenable: simState,
+      builder: (context, _) {
+        final live = simState.price.mode == FeedMode.live;
+        // Show TradingView only when the engine is ALSO on real prices for this
+        // instrument (live feed + crypto), so the chart and fills never diverge.
+        final useTv =
+            live && tradingViewSupported && market == SimMarket.crypto;
+        if (useTv) {
+          return SandboxTradingViewChart(symbol: symbol, height: height + 62);
+        }
+        return SandboxCandleChart(
+            symbol: symbol, market: market, height: height);
+      },
     );
   }
 }

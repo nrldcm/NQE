@@ -73,8 +73,13 @@ class PriceEngine extends ChangeNotifier {
   void unsubscribe(String symbol) => _subs.remove(symbol.toUpperCase());
 
   /// Advance every subscribed symbol one simulated step. Public for tests.
+  /// In live mode, symbols that have a real provider (crypto) are NOT walked —
+  /// they're set by [_fetchLive] to the real price, so the chart and the fill
+  /// engine agree exactly.
   void step() {
+    final live = mode == FeedMode.live;
     for (final s in _subs) {
+      if (live && instrumentFor(s)?.market == SimMarket.crypto) continue;
       final cur = _price[s] ?? seedPriceFor(s);
       _price[s] = _nextPrice(s, cur);
     }

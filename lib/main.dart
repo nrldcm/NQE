@@ -8,6 +8,7 @@ import 'package:window_manager/window_manager.dart';
 import 'package:windows_single_instance/windows_single_instance.dart';
 
 import 'services/auth_service.dart';
+import 'sim/sim_state.dart';
 import 'screens/desktop/desktop_shell.dart';
 import 'screens/lock_screen.dart';
 import 'screens/splash_screen.dart';
@@ -82,6 +83,11 @@ class _NqeAppState extends State<NqeApp> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // Start the sandbox engine at launch so pending orders keep getting watched
+    // and filled in the background (and fire notifications) even when the Trade
+    // tab isn't open — like a real trading account. Mobile only (a paired
+    // desktop is a mirror and must not run its own engine).
+    simState.init();
   }
 
   @override
