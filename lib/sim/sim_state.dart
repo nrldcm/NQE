@@ -157,6 +157,16 @@ class SimState extends ChangeNotifier {
     notifyListeners();
   }
 
+  // Serial queue for sim DB writes + reloads, so a reload can never read the
+  // DB in the middle of a not-yet-finished persist (which could otherwise
+  // reload a just-filled order as still "open" and double-fill it).
+  Future<void> _q = Future.value();
+  Future<void> _serial(Future<void> Function() task) {
+    final r = _q.then((_) => task());
+    _q = r.catchError((_) {});
+    return r;
+  }
+
   void _onPrices() {
     final pf = _pf;
     if (pf == null) return;
@@ -169,8 +179,8 @@ class SimState extends ChangeNotifier {
           effect.filledOrders.isNotEmpty ||
           effect.liquidatedSymbols.isNotEmpty ||
           effect.removedOrderIds.isNotEmpty) {
-        _persist(effect);
         _noticeForEffect(effect);
+        _serial(() => _persist(effect));
       }
     }
     notifyListeners();
@@ -178,8 +188,11 @@ class SimState extends ChangeNotifier {
 
   /// Called by the sync layer after remote sandbox rows are applied, so the
   /// in-memory portfolio reflects them (and, on the authority, newly-synced
-  /// orders enter the engine loop).
-  Future<void> onRemoteSimApplied() async {
+  /// orders enter the engine loop). Runs on the serial queue, so it never
+  /// races a pending persist.
+  Future<void> onRemoteSimApplied() => _serial(_reloadFromDb);
+
+  Future<void> _reloadFromDb() async {
     final accounts = await _db.accounts();
     if (accounts.isEmpty) return;
     final prevId = _pf?.account.id;
@@ -210,14 +223,14 @@ class SimState extends ChangeNotifier {
     if (mirror) {
       order.status = OrderStatus.open;
       pf.orders.add(order);
-      await _db.upsertOrder(order);
+      await _serial(() => _db.upsertOrder(order));
       notifyListeners();
       return null;
     }
     final e = SimEngine.placeOrder(pf, order,
         priceOf: priceOf, nowMs: _now(), uid: uid, fxOf: fxOf);
     if (e.rejected) return e.rejectReason;
-    await _persist(e);
+    await _serial(() => _persist(e));
     _noticeForEffect(e, placed: true);
     notifyListeners();
     return null;

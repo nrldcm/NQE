@@ -50,7 +50,8 @@ class SimDb {
         id TEXT PRIMARY KEY, account_id TEXT, symbol TEXT, market INTEGER,
         mode INTEGER, side INTEGER, type INTEGER, qty REAL, leverage REAL,
         limit_price REAL, stop_price REAL, reduce_only INTEGER, status INTEGER,
-        fill_price REAL, created_at INTEGER, filled_at INTEGER)''');
+        fill_price REAL, created_at INTEGER, filled_at INTEGER,
+        updated_at INTEGER)''');
     await d.execute('''
       CREATE TABLE IF NOT EXISTS sim_trades(
         id TEXT PRIMARY KEY, account_id TEXT, symbol TEXT, market INTEGER,
@@ -80,10 +81,23 @@ class SimDb {
 
   Future<void> deleteAccount(String id) async {
     final d = await db;
-    await d.delete('sim_accounts', where: 'id=?', whereArgs: [id]);
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    // Tombstone every deleted row so the deletion propagates across devices and
+    // a peer holding the old rows can't resurrect them on the next sync.
+    Future<void> tomb(String entity, String rowId) => d.insert(
+        'sim_tombstones',
+        {'entity': entity, 'id': rowId, 'updated_at': ts},
+        conflictAlgorithm: ConflictAlgorithm.replace);
     for (final t in ['sim_positions', 'sim_orders', 'sim_trades', 'sim_watch']) {
+      final rows = await d.query(t,
+          columns: ['id'], where: 'account_id=?', whereArgs: [id]);
+      for (final r in rows) {
+        await tomb(t, (r['id'] ?? '').toString());
+      }
       await d.delete(t, where: 'account_id=?', whereArgs: [id]);
     }
+    await d.delete('sim_accounts', where: 'id=?', whereArgs: [id]);
+    await tomb('sim_accounts', id);
   }
 
   // ---- positions ----
