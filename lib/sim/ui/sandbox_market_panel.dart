@@ -44,10 +44,9 @@ class _SandboxMarketPanelState extends State<SandboxMarketPanel> {
   Widget build(BuildContext context) {
     final pal = context.nqe;
     final results = _results;
-    // Keep quotes flowing for what's on screen.
-    for (final s in results) {
-      simState.price.subscribe(s.symbol);
-    }
+    // NB: symbols are subscribed once by SandboxScreen (off-build) — never
+    // subscribe here, since PriceEngine.subscribe notifies synchronously and
+    // would trigger setState-during-build.
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -87,7 +86,9 @@ class _SandboxMarketPanelState extends State<SandboxMarketPanel> {
         const SizedBox(height: 6),
         Expanded(
           child: ListenableBuilder(
-            listenable: simState.price,
+            // simState notifies on every price tick AND on watch changes, so
+            // both live quotes and the star toggle repaint immediately.
+            listenable: simState,
             builder: (context, _) {
               if (results.isEmpty) {
                 return Center(
@@ -153,6 +154,7 @@ class _SandboxMarketPanelState extends State<SandboxMarketPanel> {
                 FlashPrice(
                   price: price,
                   market: s.market,
+                  tag: s.symbol,
                   style: TextStyle(
                       color: pal.textHi,
                       fontWeight: FontWeight.w700,

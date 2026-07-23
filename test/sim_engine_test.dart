@@ -203,4 +203,140 @@ void main() {
     expect(SimEngine.equity(p, priced({'ETHUSDT': 110})),
         closeTo(100000 + 100 - 1 - 1.1, 0.5));
   });
+
+  test('take-profit fills on the RIGHT side — a long TP-sell waits for the rise',
+      () {
+    final p = fresh();
+    SimEngine.placeOrder(p, mkt('BTCUSDT', OrderSide.buy, 10),
+        priceOf: priced({'BTCUSDT': 100}), nowMs: now(), uid: uid);
+    final tp = SimOrder(
+      id: uid(),
+      accountId: 'acc',
+      symbol: 'BTCUSDT',
+      market: SimMarket.crypto,
+      mode: TradeMode.spot,
+      side: OrderSide.sell,
+      type: OrderType.takeProfit,
+      qty: 10,
+      stopPrice: 110,
+      reduceOnly: true,
+      createdAtMs: 0,
+    );
+    SimEngine.placeOrder(p, tp,
+        priceOf: priced({'BTCUSDT': 100}), nowMs: now(), uid: uid);
+    // Below target → must NOT fire (the old bug fired immediately here).
+    var e = SimEngine.onTick(p,
+        priceOf: priced({'BTCUSDT': 105}), nowMs: now(), uid: uid);
+    expect(e.filledOrders, isEmpty);
+    expect(p.positions, isNotEmpty);
+    // Rises to the target → fills for a profit.
+    e = SimEngine.onTick(p,
+        priceOf: priced({'BTCUSDT': 112}), nowMs: now(), uid: uid);
+    expect(e.filledOrders.length, 1);
+    expect(p.positions, isEmpty);
+    expect(p.account.realizedPnl, greaterThan(0));
+  });
+
+  test('a reduce-only stop is CANCELLED (never opens a new position) once the '
+      'position is already closed', () {
+    final p = fresh();
+    // Margin long.
+    SimEngine.placeOrder(
+        p, mkt('ETHUSDT', OrderSide.buy, 10, mode: TradeMode.margin, lev: 5),
+        priceOf: priced({'ETHUSDT': 100}), nowMs: now(), uid: uid);
+    // OCO: reduce-only TP-sell @110 and reduce-only stop-sell @90.
+    final tp = SimOrder(
+        id: uid(),
+        accountId: 'acc',
+        symbol: 'ETHUSDT',
+        market: SimMarket.crypto,
+        mode: TradeMode.margin,
+        side: OrderSide.sell,
+        type: OrderType.takeProfit,
+        qty: 10,
+        leverage: 5,
+        stopPrice: 110,
+        reduceOnly: true,
+        createdAtMs: 0);
+    final stop = SimOrder(
+        id: uid(),
+        accountId: 'acc',
+        symbol: 'ETHUSDT',
+        market: SimMarket.crypto,
+        mode: TradeMode.margin,
+        side: OrderSide.sell,
+        type: OrderType.stop,
+        qty: 10,
+        leverage: 5,
+        stopPrice: 90,
+        reduceOnly: true,
+        createdAtMs: 0);
+    SimEngine.placeOrder(p, tp,
+        priceOf: priced({'ETHUSDT': 100}), nowMs: now(), uid: uid);
+    SimEngine.placeOrder(p, stop,
+        priceOf: priced({'ETHUSDT': 100}), nowMs: now(), uid: uid);
+    // Price rises → TP closes the long.
+    var e = SimEngine.onTick(p,
+        priceOf: priced({'ETHUSDT': 111}), nowMs: now(), uid: uid);
+    expect(e.filledOrders.length, 1);
+    expect(p.positions, isEmpty);
+    // Later the stop's price is hit — but the position is gone, so it must be
+    // cancelled, NOT opened as a fresh short.
+    e = SimEngine.onTick(p,
+        priceOf: priced({'ETHUSDT': 89}), nowMs: now(), uid: uid);
+    expect(p.positions, isEmpty, reason: 'reduce-only must never open exposure');
+    expect(e.filledOrders, isEmpty);
+    expect(e.removedOrderIds, contains(stop.id));
+    expect(p.orders, isEmpty);
+  });
+
+  test('a 1x margin SHORT has a liquidation price and liquidates', () {
+    final p = fresh();
+    SimEngine.placeOrder(
+        p, mkt('ETHUSDT', OrderSide.sell, 10, mode: TradeMode.margin, lev: 1),
+        priceOf: priced({'ETHUSDT': 100}), nowMs: now(), uid: uid);
+    final pos = p.positions.first;
+    expect(pos.side, PositionSide.short);
+    // 1x short liquidates at 2x entry.
+    expect(pos.liquidationPrice, closeTo(200, 1e-6));
+    final e = SimEngine.onTick(p,
+        priceOf: priced({'ETHUSDT': 201}), nowMs: now(), uid: uid);
+    expect(e.liquidatedSymbols, contains('ETHUSDT'));
+    expect(p.positions, isEmpty);
+  });
+
+  test('a 1x margin LONG reports no liquidation price (unreachable at price 0)',
+      () {
+    final p = fresh();
+    SimEngine.placeOrder(
+        p, mkt('ETHUSDT', OrderSide.buy, 10, mode: TradeMode.margin, lev: 1),
+        priceOf: priced({'ETHUSDT': 100}), nowMs: now(), uid: uid);
+    expect(p.positions.first.liquidationPrice, isNull);
+  });
+
+  test('a reduce-only market order cannot flip — it is capped to the position',
+      () {
+    final p = fresh();
+    SimEngine.placeOrder(
+        p, mkt('ETHUSDT', OrderSide.buy, 10, mode: TradeMode.margin, lev: 5),
+        priceOf: priced({'ETHUSDT': 100}), nowMs: now(), uid: uid);
+    // Ask to reduce-only-sell 25 when only 10 are open → clamps to 10, closes,
+    // and does NOT open a 15-short.
+    final close = SimOrder(
+        id: uid(),
+        accountId: 'acc',
+        symbol: 'ETHUSDT',
+        market: SimMarket.crypto,
+        mode: TradeMode.margin,
+        side: OrderSide.sell,
+        type: OrderType.market,
+        qty: 25,
+        leverage: 5,
+        reduceOnly: true,
+        createdAtMs: 0);
+    final e = SimEngine.placeOrder(p, close,
+        priceOf: priced({'ETHUSDT': 105}), nowMs: now(), uid: uid);
+    expect(e.rejected, isFalse);
+    expect(p.positions, isEmpty);
+  });
 }

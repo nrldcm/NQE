@@ -32,6 +32,7 @@ class SimEffect {
   final List<SimOrder> newOrders;
   final List<String> closedPositionIds;
   final List<String> liquidatedSymbols; // symbols force-closed by liquidation
+  final List<String> removedOrderIds; // pending orders cancelled/rejected on tick
   final String? rejectReason;
   const SimEffect({
     this.trades = const [],
@@ -39,6 +40,7 @@ class SimEffect {
     this.newOrders = const [],
     this.closedPositionIds = const [],
     this.liquidatedSymbols = const [],
+    this.removedOrderIds = const [],
     this.rejectReason,
   });
   bool get rejected => rejectReason != null;
@@ -113,6 +115,15 @@ class SimEngine {
       }
     }
 
+    // Reduce-only orders must never open or flip a position.
+    if (order.reduceOnly) {
+      final avail = _reducibleQty(p, order);
+      if (avail <= 1e-9) {
+        return const SimEffect(rejectReason: 'Nothing to close on this side.');
+      }
+      if (avail < order.qty) order.qty = avail;
+    }
+
     if (order.type == OrderType.market) {
       final px = _fillPrice(priceOf(order.symbol), order.side, slippage);
       if (!(px > 0)) {
@@ -149,6 +160,7 @@ class SimEngine {
     final filled = <SimOrder>[];
     final closed = <String>[];
     final liquidated = <String>[];
+    final removed = <String>[]; // pending orders cancelled/rejected this tick
 
     // 1) Pending order triggers.
     for (final o in p.orders.toList()) {
@@ -156,6 +168,19 @@ class SimEngine {
       final mkt = priceOf(o.symbol);
       if (!(mkt > 0)) continue;
       if (_triggered(o, mkt)) {
+        // Reduce-only (stop-loss / take-profit / OCO leg): clamp to what's
+        // actually open on the opposing side; cancel if the position is gone
+        // so it can never open fresh exposure.
+        if (o.reduceOnly) {
+          final avail = _reducibleQty(p, o);
+          if (avail <= 1e-9) {
+            o.status = OrderStatus.cancelled;
+            p.orders.remove(o);
+            removed.add(o.id);
+            continue;
+          }
+          if (avail < o.qty) o.qty = avail;
+        }
         final px = _fillPrice(
             o.type == OrderType.limit ? (o.limitPrice ?? mkt) : mkt,
             o.side,
@@ -164,6 +189,7 @@ class SimEngine {
         if (afford != null) {
           o.status = OrderStatus.rejected;
           p.orders.remove(o);
+          removed.add(o.id);
           continue;
         }
         final r = _applyFill(p, o, px, nowMs: nowMs, uid: uid);
@@ -211,11 +237,24 @@ class SimEngine {
         trades: trades,
         filledOrders: filled,
         closedPositionIds: closed,
-        liquidatedSymbols: liquidated);
+        liquidatedSymbols: liquidated,
+        removedOrderIds: removed);
   }
 
   static void cancelOrder(SimPortfolio p, String orderId) {
     p.orders.removeWhere((o) => o.id == orderId);
+  }
+
+  /// Quantity a (reduce-only) order can actually close on the opposing side —
+  /// 0 if there's nothing to reduce (so it must be cancelled, never opened).
+  static double _reducibleQty(SimPortfolio p, SimOrder o) {
+    final pos = _posFor(p, o.symbol, o.mode);
+    if (pos == null) return 0;
+    final reduces =
+        (pos.side == PositionSide.long && o.side == OrderSide.sell) ||
+            (pos.side == PositionSide.short && o.side == OrderSide.buy);
+    if (!reduces) return 0;
+    return min(o.qty, pos.qty);
   }
 
   // ---- internals -----------------------------------------------------------
@@ -230,11 +269,16 @@ class SimEngine {
         if (lp == null) return false;
         return o.side == OrderSide.buy ? mkt <= lp : mkt >= lp;
       case OrderType.stop:
-      case OrderType.takeProfit:
         final sp = o.stopPrice;
         if (sp == null) return false;
         // stop-buy triggers when price >= stop; stop-sell when price <= stop.
         return o.side == OrderSide.buy ? mkt >= sp : mkt <= sp;
+      case OrderType.takeProfit:
+        final tp = o.stopPrice;
+        if (tp == null) return false;
+        // Take-profit is the mirror of a stop: a long's TP-sell fires when
+        // price RISES to the target; a short's TP-buy fires when it FALLS.
+        return o.side == OrderSide.buy ? mkt <= tp : mkt >= tp;
     }
   }
 

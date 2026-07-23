@@ -122,11 +122,16 @@ class FlashPrice extends StatefulWidget {
   final double price;
   final SimMarket market;
   final TextStyle style;
+
+  /// Identity of the series (usually the symbol). When it changes, the widget
+  /// resets its baseline instead of flashing a spurious move.
+  final Object? tag;
   const FlashPrice(
       {super.key,
       required this.price,
       required this.market,
-      required this.style});
+      required this.style,
+      this.tag});
 
   @override
   State<FlashPrice> createState() => _FlashPriceState();
@@ -139,6 +144,12 @@ class _FlashPriceState extends State<FlashPrice> {
   @override
   void didUpdateWidget(covariant FlashPrice old) {
     super.didUpdateWidget(old);
+    if (widget.tag != old.tag) {
+      // Different instrument — reset baseline, don't flash.
+      _dir = 0;
+      _last = widget.price;
+      return;
+    }
     if (_last != null && widget.price != _last) {
       _dir = widget.price > _last! ? 1 : -1;
     }

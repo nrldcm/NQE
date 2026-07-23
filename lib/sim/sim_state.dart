@@ -104,7 +104,8 @@ class SimState extends ChangeNotifier {
         priceOf: priceOf, nowMs: _now(), uid: uid);
     if (effect.trades.isNotEmpty ||
         effect.filledOrders.isNotEmpty ||
-        effect.liquidatedSymbols.isNotEmpty) {
+        effect.liquidatedSymbols.isNotEmpty ||
+        effect.removedOrderIds.isNotEmpty) {
       _persist(effect);
       _noticeForEffect(effect);
     }
@@ -221,6 +222,9 @@ class SimState extends ChangeNotifier {
     }
     for (final id in e.closedPositionIds) {
       await _db.deletePosition(id);
+    }
+    for (final id in e.removedOrderIds) {
+      await _db.deleteOrder(id); // rejected/cancelled pending orders
     }
     for (final pos in pf.positions) {
       await _db.upsertPosition(pos);

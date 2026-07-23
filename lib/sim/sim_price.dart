@@ -54,10 +54,20 @@ class PriceEngine extends ChangeNotifier {
     }
   }
 
+  /// Subscribe a batch of symbols with a single [notifyListeners] at the end,
+  /// so it's safe to call outside build without a notify-per-symbol storm.
   void subscribeAll(Iterable<String> symbols) {
-    for (final s in symbols) {
-      subscribe(s);
+    var added = false;
+    for (final raw in symbols) {
+      final s = raw.toUpperCase();
+      if (_subs.add(s)) {
+        final seed = seedPriceFor(s);
+        _price.putIfAbsent(s, () => seed);
+        _prevClose.putIfAbsent(s, () => seed);
+        added = true;
+      }
     }
+    if (added) notifyListeners();
   }
 
   void unsubscribe(String symbol) => _subs.remove(symbol.toUpperCase());
@@ -127,18 +137,21 @@ class PriceEngine extends ChangeNotifier {
     if (_fetching) return;
     _fetching = true;
     try {
-      for (final s in _subs.toList()) {
-        final inst = instrumentFor(s);
-        double? live;
-        if (inst?.market == SimMarket.crypto) {
-          live = await _binancePrice(s);
-        }
-        // FX / stocks live providers can be wired here; unfetched symbols keep
-        // their simulated value so the engine never stalls.
+      // Only crypto has a wired live provider; fetch them concurrently so the
+      // feed keeps up with the tick instead of serializing timeouts.
+      final crypto = _subs
+          .where((s) => instrumentFor(s)?.market == SimMarket.crypto)
+          .toList();
+      final results = await Future.wait(
+          crypto.map((s) => _binancePrice(s)),
+          eagerError: false);
+      for (var i = 0; i < crypto.length; i++) {
+        final live = results[i];
         if (live != null && live.isFinite && live > 0) {
-          _price[s] = live;
+          _price[crypto[i]] = live;
         }
       }
+      // FX / stocks keep their simulated value so the engine never stalls.
       notifyListeners();
     } catch (_) {
       // Best-effort; ignore and keep simulated values.
@@ -152,8 +165,8 @@ class PriceEngine extends ChangeNotifier {
     try {
       c = HttpClient()..connectionTimeout = const Duration(seconds: 4);
       final req = await c
-          .getUrl(Uri.parse(
-              'https://api.binance.com/api/v3/ticker/price?symbol=$symbol'))
+          .getUrl(Uri.https('api.binance.com', '/api/v3/ticker/price',
+              {'symbol': symbol}))
           .timeout(const Duration(seconds: 4));
       final resp = await req.close().timeout(const Duration(seconds: 5));
       final body = await resp

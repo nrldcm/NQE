@@ -38,7 +38,12 @@ class _SandboxScreenState extends State<SandboxScreen>
     super.initState();
     _tabs = TabController(length: 4, vsync: this);
     simState.init();
+    // Subscribe the whole catalogue once, off-build (batched, single notify),
+    // so market rows show live quotes without ever subscribing during build.
+    simState.price.subscribeAll(kInstruments.map((e) => e.symbol));
     simState.price.subscribe(_symbol);
+    // Seed so a notice that fired while we were away isn't re-flashed on mount.
+    _shownNotice = simState.lastNotice;
     simState.addListener(_onTick);
   }
 
@@ -51,6 +56,9 @@ class _SandboxScreenState extends State<SandboxScreen>
 
   void _onTick() {
     // Append the newest price for the selected symbol to its rolling window.
+    // No setState here — the top-level ListenableBuilder(simState) already
+    // rebuilds this screen on the same notification (and runs after this
+    // listener, so it reads the freshly-appended point). One rebuild per tick.
     final px = simState.priceOf(_symbol);
     final buf = _history.putIfAbsent(_symbol, () => <double>[]);
     if (buf.isEmpty || buf.last != px) {
@@ -58,7 +66,6 @@ class _SandboxScreenState extends State<SandboxScreen>
       if (buf.length > 160) buf.removeRange(0, buf.length - 160);
     }
     _maybeFlashNotice();
-    if (mounted) setState(() {});
   }
 
   void _maybeFlashNotice() {
@@ -439,26 +446,33 @@ class _SymbolBar extends StatelessWidget {
       children: [
         MarketBadge(market),
         const SizedBox(width: 10),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(symbol,
-                style: TextStyle(
-                    color: pal.textHi,
-                    fontSize: 20,
-                    fontWeight: FontWeight.w800)),
-            if (inst != null)
-              Text(inst.name,
-                  style: TextStyle(color: pal.textLo, fontSize: 12)),
-          ],
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(symbol,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      color: pal.textHi,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800)),
+              if (inst != null)
+                Text(inst.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: pal.textLo, fontSize: 12)),
+            ],
+          ),
         ),
-        const Spacer(),
+        const SizedBox(width: 8),
         Column(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             FlashPrice(
               price: price,
               market: market,
+              tag: symbol,
               style: TextStyle(
                   color: pal.textHi,
                   fontSize: 20,

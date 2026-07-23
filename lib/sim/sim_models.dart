@@ -142,11 +142,15 @@ class SimPosition {
   /// Price at which the position's equity is wiped out (margin only).
   /// long:  entry * (1 - 1/leverage);  short: entry * (1 + 1/leverage).
   double? get liquidationPrice {
-    if (mode != TradeMode.margin || leverage <= 1) return null;
+    if (mode != TradeMode.margin || leverage < 1) return null;
     final f = 1 / leverage;
-    return side == PositionSide.long
+    final liq = side == PositionSide.long
         ? avgPrice * (1 - f)
         : avgPrice * (1 + f);
+    // A 1x long liquidates only at price 0 (unreachable, price is floored above
+    // 0), so report none. A 1x short DOES liquidate — at 2x entry — so keep it.
+    if (side == PositionSide.long && liq <= 0) return null;
+    return liq;
   }
 
   Map<String, Object?> toMap() => {
@@ -168,9 +172,9 @@ class SimPosition {
         id: m['id'] as String,
         accountId: m['account_id'] as String,
         symbol: m['symbol'] as String,
-        market: SimMarket.values[(m['market'] as int?) ?? 0],
-        mode: TradeMode.values[(m['mode'] as int?) ?? 0],
-        side: PositionSide.values[(m['side'] as int?) ?? 0],
+        market: _enumAt(SimMarket.values, m['market'], SimMarket.stocks),
+        mode: _enumAt(TradeMode.values, m['mode'], TradeMode.spot),
+        side: _enumAt(PositionSide.values, m['side'], PositionSide.long),
         qty: _d(m['qty'], 0),
         avgPrice: _d(m['avg_price'], 0),
         leverage: _d(m['leverage'], 1),
@@ -242,16 +246,16 @@ class SimOrder {
         id: m['id'] as String,
         accountId: m['account_id'] as String,
         symbol: m['symbol'] as String,
-        market: SimMarket.values[(m['market'] as int?) ?? 0],
-        mode: TradeMode.values[(m['mode'] as int?) ?? 0],
-        side: OrderSide.values[(m['side'] as int?) ?? 0],
-        type: OrderType.values[(m['type'] as int?) ?? 0],
+        market: _enumAt(SimMarket.values, m['market'], SimMarket.stocks),
+        mode: _enumAt(TradeMode.values, m['mode'], TradeMode.spot),
+        side: _enumAt(OrderSide.values, m['side'], OrderSide.buy),
+        type: _enumAt(OrderType.values, m['type'], OrderType.market),
         qty: _d(m['qty'], 0),
         leverage: _d(m['leverage'], 1),
         limitPrice: _dn(m['limit_price']),
         stopPrice: _dn(m['stop_price']),
         reduceOnly: (m['reduce_only'] as int? ?? 0) == 1,
-        status: OrderStatus.values[(m['status'] as int?) ?? 0],
+        status: _enumAt(OrderStatus.values, m['status'], OrderStatus.open),
         fillPrice: _dn(m['fill_price']),
         createdAtMs: (m['created_at'] as int?) ?? 0,
         filledAtMs: m['filled_at'] as int?,
@@ -305,9 +309,9 @@ class SimTrade {
         id: m['id'] as String,
         accountId: m['account_id'] as String,
         symbol: m['symbol'] as String,
-        market: SimMarket.values[(m['market'] as int?) ?? 0],
-        mode: TradeMode.values[(m['mode'] as int?) ?? 0],
-        side: OrderSide.values[(m['side'] as int?) ?? 0],
+        market: _enumAt(SimMarket.values, m['market'], SimMarket.stocks),
+        mode: _enumAt(TradeMode.values, m['mode'], TradeMode.spot),
+        side: _enumAt(OrderSide.values, m['side'], OrderSide.buy),
         qty: _d(m['qty'], 0),
         price: _d(m['price'], 0),
         fee: _d(m['fee'], 0),
@@ -345,7 +349,7 @@ class SimWatch {
         id: m['id'] as String,
         accountId: m['account_id'] as String,
         symbol: m['symbol'] as String,
-        market: SimMarket.values[(m['market'] as int?) ?? 0],
+        market: _enumAt(SimMarket.values, m['market'], SimMarket.stocks),
         addedAtMs: (m['added_at'] as int?) ?? 0,
       );
 }
@@ -385,6 +389,14 @@ double? _dn(Object? v) {
     return (d != null && d.isFinite) ? d : null;
   }
   return null;
+}
+
+/// Safe enum decode from a stored index — an out-of-range or non-int value
+/// (e.g. a corrupted/hand-edited sandbox DB, or an enum case removed in a later
+/// version) falls back to [fallback] instead of throwing RangeError.
+T _enumAt<T>(List<T> values, Object? idx, T fallback) {
+  if (idx is int && idx >= 0 && idx < values.length) return values[idx];
+  return fallback;
 }
 
 /// Convenience for JSON round-tripping a list of maps (used in tests/exports).

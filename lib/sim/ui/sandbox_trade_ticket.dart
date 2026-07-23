@@ -198,6 +198,7 @@ class _SandboxTradeTicketState extends State<SandboxTradeTicket> {
               FlashPrice(
                 price: _last,
                 market: _market,
+                tag: widget.symbol,
                 style: TextStyle(
                     color: pal.textHi,
                     fontSize: 16,
@@ -299,23 +300,47 @@ class _SandboxTradeTicketState extends State<SandboxTradeTicket> {
           // Leverage
           if (_mode == TradeMode.margin) ...[
             const SizedBox(height: 10),
-            Row(
-              children: [
-                Text('Leverage', style: TextStyle(color: pal.textLo, fontSize: 12)),
-                const Spacer(),
-                Text('${_leverage.toStringAsFixed(0)}x',
-                    style: TextStyle(
-                        color: pal.textHi, fontWeight: FontWeight.w800)),
-              ],
-            ),
-            Slider(
-              value: _leverage,
-              min: 1,
-              max: (simState.account?.maxLeverage ?? 10),
-              divisions: ((simState.account?.maxLeverage ?? 10) - 1).round().clamp(1, 100),
-              label: '${_leverage.toStringAsFixed(0)}x',
-              onChanged: (v) => setState(() => _leverage = v),
-            ),
+            Builder(builder: (context) {
+              final maxLev = (simState.account?.maxLeverage ?? 10);
+              // Guard the Slider assertions: keep value within [1, maxLev] and
+              // never let min == max (an account capped at 1x shows no slider).
+              final lev = _leverage.clamp(1.0, maxLev < 1 ? 1.0 : maxLev);
+              if (maxLev <= 1) {
+                return Row(
+                  children: [
+                    Text('Leverage',
+                        style: TextStyle(color: pal.textLo, fontSize: 12)),
+                    const Spacer(),
+                    Text('1x',
+                        style: TextStyle(
+                            color: pal.textHi, fontWeight: FontWeight.w800)),
+                  ],
+                );
+              }
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Text('Leverage',
+                          style: TextStyle(color: pal.textLo, fontSize: 12)),
+                      const Spacer(),
+                      Text('${lev.toStringAsFixed(0)}x',
+                          style: TextStyle(
+                              color: pal.textHi, fontWeight: FontWeight.w800)),
+                    ],
+                  ),
+                  Slider(
+                    value: lev,
+                    min: 1,
+                    max: maxLev,
+                    divisions: (maxLev - 1).round().clamp(1, 100),
+                    label: '${lev.toStringAsFixed(0)}x',
+                    onChanged: (v) => setState(() => _leverage = v),
+                  ),
+                ],
+              );
+            }),
           ],
 
           const SizedBox(height: 6),
