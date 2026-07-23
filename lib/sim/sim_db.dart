@@ -11,6 +11,10 @@ class SimDb {
   SimDb._();
   static final SimDb instance = SimDb._();
 
+  /// Test-only: a SimDb backed by an already-open database, so a test can spin
+  /// up two isolated "devices" and exercise the real sync round-trip.
+  SimDb.forDb(Database db) : _db = db;
+
   Database? _db;
 
   Future<Database> get db async => _db ??= await _open();
@@ -18,6 +22,12 @@ class SimDb {
   Future<Database> _open() async {
     final dir = await getApplicationDocumentsDirectory();
     final path = p.join(dir.path, 'nqe_sandbox.db');
+    return openAtPath(path);
+  }
+
+  /// Open (creating / upgrading) the sandbox schema at [path]. Public so tests
+  /// can create isolated databases; production goes through [_open].
+  static Future<Database> openAtPath(String path) {
     return openDatabase(
       path,
       version: 2,
@@ -33,7 +43,7 @@ class SimDb {
     );
   }
 
-  Future<void> _create(Database d) async {
+  static Future<void> _create(Database d) async {
     await d.execute('''
       CREATE TABLE IF NOT EXISTS sim_accounts(
         id TEXT PRIMARY KEY, name TEXT, currency TEXT,

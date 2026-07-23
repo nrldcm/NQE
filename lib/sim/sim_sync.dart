@@ -40,10 +40,12 @@ class SimSyncRepo {
   }
 
   /// Snapshot all sandbox rows + tombstones as sync records (stamp = ms string).
-  Future<List<SyncRecord>> buildAll() async {
+  /// [db] defaults to the app's singleton; tests pass an isolated instance.
+  Future<List<SyncRecord>> buildAll({SimDb? db}) async {
+    final sdb = db ?? SimDb.instance;
     final out = <SyncRecord>[];
     for (final table in kSimTables) {
-      final rows = await SimDb.instance.rawRows(table);
+      final rows = await sdb.rawRows(table);
       for (final row in rows) {
         out.add(SyncRecord(
           table: table,
@@ -54,7 +56,7 @@ class SimSyncRepo {
         ));
       }
     }
-    for (final t in await SimDb.instance.tombstoneRows()) {
+    for (final t in await sdb.tombstoneRows()) {
       out.add(SyncRecord(
         table: (t['entity'] ?? '').toString(),
         id: (t['id'] ?? '').toString(),
@@ -84,10 +86,10 @@ class SimSyncRepo {
   ///    accept brand-NEW rows the phone doesn't have yet (an order the desktop
   ///    placed/forwarded), and accept a mirror's cancel of a still-open order.
   Future<int> applyRemote(List<SyncRecord> remote,
-      {bool asFollower = false}) async {
+      {bool asFollower = false, SimDb? db}) async {
     final sim = remote.where((r) => kSimTables.contains(r.table)).toList();
     if (sim.isEmpty) return 0;
-    final d = await SimDb.instance.db;
+    final d = await (db ?? SimDb.instance).db;
 
     // Accounts before their children so a replaced child never dangles.
     sim.sort((a, b) => _priority(a.table).compareTo(_priority(b.table)));
