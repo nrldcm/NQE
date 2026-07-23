@@ -28,9 +28,15 @@ class PriceEngine extends ChangeNotifier {
 
   final Map<String, double> _price = {};
   final Map<String, double> _prevClose = {};
+  final Map<String, int> _lastLive = {}; // ms of last successful live quote
   final Set<String> _subs = {};
   Timer? _timer;
   bool _fetching = false;
+
+  /// How long a live quote is considered "fresh". Past this (e.g. offline), the
+  /// symbol falls back to the random walk so its price is never frozen and
+  /// pending orders can still fill.
+  static const int _liveStaleMs = 8000;
 
   double? price(String symbol) => _price[symbol.toUpperCase()];
 
@@ -78,8 +84,16 @@ class PriceEngine extends ChangeNotifier {
   /// engine agree exactly.
   void step() {
     final live = mode == FeedMode.live;
+    final now = _nowMs();
     for (final s in _subs) {
-      if (live && instrumentFor(s)?.market == SimMarket.crypto) continue;
+      // In live mode, crypto is driven by the real fetch — but only while that
+      // quote is fresh. If it's stale/missing (offline), fall through and walk
+      // so the price is never frozen and orders can still fill.
+      if (live &&
+          instrumentFor(s)?.market == SimMarket.crypto &&
+          now - (_lastLive[s] ?? 0) < _liveStaleMs) {
+        continue;
+      }
       final cur = _price[s] ?? seedPriceFor(s);
       _price[s] = _nextPrice(s, cur);
     }
@@ -154,6 +168,7 @@ class PriceEngine extends ChangeNotifier {
         final live = results[i];
         if (live != null && live.isFinite && live > 0) {
           _price[crypto[i]] = live;
+          _lastLive[crypto[i]] = _nowMs();
         }
       }
       // FX / stocks keep their simulated value so the engine never stalls.

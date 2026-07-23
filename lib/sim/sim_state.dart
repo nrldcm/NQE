@@ -132,7 +132,14 @@ class SimState extends ChangeNotifier {
     if (_started) return;
     _started = true;
     price.addListener(_onPrices);
-    await _load();
+    try {
+      await _load();
+    } catch (_) {
+      // Non-fatal (e.g. a DB hiccup at launch) — don't leave the UI stuck on
+      // the loading spinner; it will populate once data is available/synced.
+      loading = false;
+      notifyListeners();
+    }
     price.start();
   }
 
