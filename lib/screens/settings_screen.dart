@@ -12,6 +12,7 @@ import '../services/auth_service.dart';
 import '../services/backup_service.dart';
 import '../services/crypto_service.dart';
 import '../state/app_state.dart';
+import '../sync/foreground.dart';
 import '../sync/sync_client.dart';
 import '../sync/sync_server.dart';
 import '../theme.dart';
@@ -632,6 +633,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
             trailing: Icon(Icons.chevron_right, color: pal.textLo),
             onTap: _editSyncPort,
+          ),
+          _divider(pal),
+          ListTile(
+            leading: Icon(Icons.battery_saver_outlined, color: pal.textHi),
+            title:
+                Text('Background sync', style: TextStyle(color: pal.textHi)),
+            subtitle: Text(
+                'Keep syncing when locked — set power to “No restrictions”',
+                style: TextStyle(color: pal.textLo, fontSize: 12)),
+            trailing: Icon(Icons.chevron_right, color: pal.textLo),
+            onTap: () async {
+              await requestBackgroundPermissions();
+              await openBatterySettings();
+            },
           ),
           if (running) ...[
             _divider(pal),

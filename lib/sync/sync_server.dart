@@ -77,9 +77,18 @@ class SyncServer extends ChangeNotifier {
   /// started on the first connect and cancelled on the last disconnect / stop().
   Timer? _pushTimer;
 
-  /// How often the server proactively pushes a fresh encrypted snapshot to each
-  /// connected peer so phone-side edits reach connected desktops automatically.
-  static const Duration _pushInterval = Duration(seconds: 4);
+  /// Debounce for the event-driven (near-instant) push fired on data changes.
+  Timer? _debounce;
+
+  /// Hash of the last snapshot we sent — skips redundant pushes so applying a
+  /// remote change doesn't echo forever (convergence stops in one round).
+  int? _lastSentHash;
+
+  bool _appStateBound = false;
+
+  /// Fallback interval. The real latency comes from the event-driven push on
+  /// [appState] changes; this only catches anything the events might miss.
+  static const Duration _pushInterval = Duration(seconds: 5);
 
   /// Pairing URI encoded into the QR shown to the desktop client.
   String get pairingUri =>
@@ -188,6 +197,7 @@ class SyncServer extends ChangeNotifier {
       _server!.autoCompress = true;
 
       status = SyncStatus.running;
+      _bindAppState();
       notifyListeners();
 
       await startForeground(
@@ -211,6 +221,7 @@ class SyncServer extends ChangeNotifier {
     }
     _server = null;
     _stopPushTimer();
+    _unbindAppState();
     _peers.clear();
     connectedPeers = 0;
     peer = PeerState.idle;
@@ -219,6 +230,31 @@ class SyncServer extends ChangeNotifier {
     notifyListeners();
 
     await stopForeground();
+  }
+
+  // --- near-instant, event-driven push --------------------------------------
+
+  void _bindAppState() {
+    if (_appStateBound) return;
+    appState.addListener(_onLocalChange);
+    _appStateBound = true;
+  }
+
+  void _unbindAppState() {
+    if (!_appStateBound) return;
+    appState.removeListener(_onLocalChange);
+    _appStateBound = false;
+    _debounce?.cancel();
+    _debounce = null;
+  }
+
+  /// A local edit changed app state → push almost immediately (small debounce
+  /// coalesces the load()'s two notifications and rapid successive edits).
+  void _onLocalChange() {
+    if (_peers.isEmpty) return;
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 120),
+        () => unawaited(_pushToPeers()));
   }
 
   // --- pairing (phone is the server; the desktop connects OUT to us) --------
@@ -474,11 +510,16 @@ class SyncServer extends ChangeNotifier {
   /// (table,id)), so a re-send never duplicates or loses data. Fully guarded:
   /// a build/encrypt failure is recorded but never thrown, and a dead socket is
   /// skipped without aborting the rest.
-  Future<void> _pushToPeers() async {
+  Future<void> _pushToPeers({bool force = false}) async {
     if (_peers.isEmpty) return;
     try {
       final records = await SyncRepo.instance.buildAll();
       final json = SyncEngine.encodePayload(records);
+      // Skip when nothing changed since the last send — this stops an applied
+      // remote frame from echoing back and forth forever.
+      final hash = json.hashCode;
+      if (!force && hash == _lastSentHash) return;
+      _lastSentHash = hash;
       final encrypted = await CryptoService.instance.encryptSecret(json);
       for (final channel in _peers.toList()) {
         try {

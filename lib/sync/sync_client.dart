@@ -40,7 +40,8 @@ class SyncClient extends ChangeNotifier {
   static final SyncClient instance = SyncClient._();
 
   static const _prefsUriKey = 'nqe.sync.lastUri';
-  static const Duration _pushInterval = Duration(seconds: 4);
+  // Fallback interval; real latency comes from the event-driven push below.
+  static const Duration _pushInterval = Duration(seconds: 5);
 
   SyncConn state = SyncConn.idle;
   int attempt = 0;
@@ -61,6 +62,9 @@ class SyncClient extends ChangeNotifier {
   StreamSubscription? _sub;
   Timer? _pushTimer;
   Timer? _retryTimer;
+  Timer? _debounce;
+  int? _lastSentHash;
+  bool _appStateBound = false;
   bool _manuallyClosed = false;
   bool _authed = false;
 
@@ -256,13 +260,18 @@ class SyncClient extends ChangeNotifier {
     }
   }
 
-  /// Encrypt + send our full local snapshot. Idempotent by construction.
-  Future<void> _pushSnapshot() async {
+  /// Encrypt + send our full local snapshot. Idempotent by construction. Skips
+  /// sending when nothing changed (hash guard) so an applied remote frame does
+  /// not echo forever.
+  Future<void> _pushSnapshot({bool force = false}) async {
     final channel = _channel;
     if (channel == null || !_authed) return;
     try {
       final records = await SyncRepo.instance.buildAll();
       final json = SyncEngine.encodePayload(records);
+      final hash = json.hashCode;
+      if (!force && hash == _lastSentHash) return;
+      _lastSentHash = hash;
       final encrypted = await CryptoService.instance.encryptSecret(json);
       channel.sink.add(encrypted);
     } catch (e) {
@@ -274,6 +283,30 @@ class SyncClient extends ChangeNotifier {
   void _startPushTimer() {
     _pushTimer?.cancel();
     _pushTimer = Timer.periodic(_pushInterval, (_) => _pushSnapshot());
+    _bindAppState();
+  }
+
+  void _bindAppState() {
+    if (_appStateBound) return;
+    appState.addListener(_onLocalChange);
+    _appStateBound = true;
+  }
+
+  void _unbindAppState() {
+    if (!_appStateBound) return;
+    appState.removeListener(_onLocalChange);
+    _appStateBound = false;
+    _debounce?.cancel();
+    _debounce = null;
+  }
+
+  /// A local edit changed app state → push almost immediately for ~0-latency
+  /// sync (small debounce coalesces load()'s notifications + rapid edits).
+  void _onLocalChange() {
+    if (_channel == null || !_authed) return;
+    _debounce?.cancel();
+    _debounce =
+        Timer(const Duration(milliseconds: 120), () => _pushSnapshot());
   }
 
   /// Handle a socket drop: if not manually closed, retry with backoff up to
@@ -285,18 +318,15 @@ class SyncClient extends ChangeNotifier {
       return;
     }
 
-    if (attempt >= maxAttempts) {
-      _set(SyncConn.disconnected,
-          'Could not reconnect after $maxAttempts attempts. $reason');
-      return;
-    }
-
     attempt += 1;
-    _set(SyncConn.reconnecting,
-        'Reconnecting… (attempt $attempt of $maxAttempts)');
-
-    // Exponential-ish backoff, capped, so a flapping link doesn't hammer.
-    final secs = attempt.clamp(1, 8);
+    // Never give up: back off then cap the interval, and keep retrying forever
+    // so sync auto-recovers the moment the phone is reachable again.
+    final secs = attempt.clamp(1, 15);
+    if (attempt <= maxAttempts) {
+      _set(SyncConn.reconnecting, 'Reconnecting… (attempt $attempt)');
+    } else {
+      _set(SyncConn.disconnected, 'Disconnected — retrying every ${secs}s…');
+    }
     _retryTimer?.cancel();
     _retryTimer = Timer(Duration(seconds: secs), () {
       if (_manuallyClosed) return;
@@ -307,6 +337,8 @@ class SyncClient extends ChangeNotifier {
   void _teardownSocket() {
     _pushTimer?.cancel();
     _pushTimer = null;
+    _unbindAppState();
+    _lastSentHash = null; // force a full resend on the next connect
     _authed = false;
     try {
       _sub?.cancel();

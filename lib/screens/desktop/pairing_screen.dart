@@ -1,7 +1,7 @@
-// Desktop first-run pairing (outbound). The desktop finds the phone on the LAN
-// (auto-scan or a typed IP), connects OUT to it — so a firewalled laptop that
-// can't accept inbound still works — then confirms with the 6-digit code the
-// phone shows. On success it adopts the phone's sync endpoint + PIN.
+// Desktop first-run pairing (outbound, scan-first). The desktop auto-finds the
+// phone on the Wi-Fi and connects OUT to it — so a firewalled laptop that can't
+// accept inbound still works. No IP/port typing needed for normal use; power
+// users can press F12 to set a custom port, or expand "Enter manually".
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -24,15 +24,15 @@ class DesktopPairingScreen extends StatefulWidget {
 class _DesktopPairingScreenState extends State<DesktopPairingScreen> {
   final _pairing = DesktopPairing();
   final _ipCtrl = TextEditingController();
-  final _portCtrl = TextEditingController(text: '8787');
   final _codeCtrl = TextEditingController();
+  int _port = 8787;
+  bool _manual = false;
   bool _busy = false;
 
   @override
   void initState() {
     super.initState();
     _pairing.addListener(_onChange);
-    // Kick off an auto-scan so the user usually doesn't type anything.
     WidgetsBinding.instance.addPostFrameCallback((_) => _scan());
   }
 
@@ -45,29 +45,19 @@ class _DesktopPairingScreenState extends State<DesktopPairingScreen> {
     _pairing.removeListener(_onChange);
     _pairing.dispose();
     _ipCtrl.dispose();
-    _portCtrl.dispose();
     _codeCtrl.dispose();
     super.dispose();
   }
 
-  int get _port => sanitizePort(int.tryParse(_portCtrl.text.trim()) ?? 8787);
-
   Future<void> _scan() async {
     final hits = await _pairing.discover(_port);
     if (!mounted) return;
-    if (hits.length == 1) {
-      _ipCtrl.text = hits.first;
-      _connect(hits.first);
-    } else if (hits.isNotEmpty) {
-      _ipCtrl.text = hits.first;
-    }
+    // Exactly one phone → connect straight away (no tapping needed).
+    if (hits.length == 1) _connect(hits.first);
   }
 
   Future<void> _connect(String host) async {
-    if (host.trim().isEmpty) {
-      _snack('Enter your phone’s IP (see NQE ▸ Settings ▸ Device Sync).');
-      return;
-    }
+    if (host.trim().isEmpty) return;
     await _pairing.connect(host.trim(), _port);
   }
 
@@ -106,6 +96,49 @@ class _DesktopPairingScreenState extends State<DesktopPairingScreen> {
     }
   }
 
+  Future<void> _showPortDialog() async {
+    final pal = context.nqe;
+    final ctrl = TextEditingController(text: _port.toString());
+    final res = await showDialog<int>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: pal.surface,
+        title: Text('Custom port', style: TextStyle(color: pal.textHi)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'The port your phone’s LAN Sync Server uses (Settings ▸ Device '
+              'Sync ▸ Sync port). Default is 8787.',
+              style: TextStyle(color: pal.textLo, fontSize: 12),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: ctrl,
+              autofocus: true,
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              decoration:
+                  const InputDecoration(labelText: 'Port (1024–65535)'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () =>
+                  Navigator.pop(context, int.tryParse(ctrl.text.trim())),
+              child: const Text('Apply')),
+        ],
+      ),
+    );
+    if (res == null) return;
+    setState(() => _port = sanitizePort(res, fallback: 8787));
+    _scan();
+  }
+
   void _snack(String m) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
@@ -118,44 +151,57 @@ class _DesktopPairingScreenState extends State<DesktopPairingScreen> {
     final awaiting = st == DesktopPairState.awaitingCode ||
         st == DesktopPairState.verifying;
 
-    return Scaffold(
-      backgroundColor: pal.bg,
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(32),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 520),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const NqeLogo(scale: 0.5),
-                const SizedBox(height: 24),
-                Text('Pair with your phone',
-                    style: TextStyle(
-                        color: pal.textHi,
-                        fontSize: 24,
-                        fontWeight: FontWeight.w800)),
-                const SizedBox(height: 8),
-                Text(
-                  'On your phone open  NQE ▸ Settings ▸ Device Sync,  turn on '
-                  'LAN Sync Server, then tap Pair Desktop Device. This desktop '
-                  'finds your phone and connects to it.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: pal.textLo, height: 1.5),
-                ),
-                const SizedBox(height: 24),
-                if (awaiting) _codeCard(pal) else _findCard(pal),
-                if (_pairing.message != null) ...[
-                  const SizedBox(height: 14),
-                  Text(_pairing.message!,
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.f12): () {
+          _showPortDialog();
+        },
+      },
+      child: Focus(
+        autofocus: true,
+        child: Scaffold(
+          backgroundColor: pal.bg,
+          body: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(32),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 520),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const NqeLogo(scale: 0.5),
+                    const SizedBox(height: 24),
+                    Text('Pair with your phone',
+                        style: TextStyle(
+                            color: pal.textHi,
+                            fontSize: 24,
+                            fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 8),
+                    Text(
+                      'On your phone open  NQE ▸ Settings ▸ Device Sync,  turn on '
+                      'LAN Sync Server, then tap Pair Desktop Device. This desktop '
+                      'finds your phone automatically.',
                       textAlign: TextAlign.center,
-                      style: TextStyle(
-                          color: st == DesktopPairState.error
-                              ? NqeColors.loss
-                              : pal.textLo,
-                          fontSize: 12)),
-                ],
-              ],
+                      style: TextStyle(color: pal.textLo, height: 1.5),
+                    ),
+                    const SizedBox(height: 24),
+                    if (awaiting) _codeCard(pal) else _findCard(pal),
+                    if (_pairing.message != null) ...[
+                      const SizedBox(height: 14),
+                      Text(_pairing.message!,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                              color: st == DesktopPairState.error
+                                  ? NqeColors.loss
+                                  : pal.textLo,
+                              fontSize: 12)),
+                    ],
+                    const SizedBox(height: 10),
+                    Text('Port $_port · press F12 to change',
+                        style: TextStyle(color: pal.textLo, fontSize: 11)),
+                  ],
+                ),
+              ),
             ),
           ),
         ),
@@ -175,78 +221,81 @@ class _DesktopPairingScreenState extends State<DesktopPairingScreen> {
       ),
       child: Column(
         children: [
-          Row(
-            children: [
-              Expanded(
-                flex: 3,
-                child: TextField(
-                  controller: _ipCtrl,
-                  enabled: !scanning,
-                  keyboardType: TextInputType.text,
-                  decoration: const InputDecoration(
-                    labelText: 'Phone IP',
-                    hintText: 'e.g. 192.168.1.71',
-                  ),
-                  onSubmitted: (v) => _connect(v),
+          if (scanning) ...[
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2)),
+                const SizedBox(width: 12),
+                Text(
+                  _pairing.state == DesktopPairState.connecting
+                      ? 'Connecting…'
+                      : 'Searching your Wi-Fi for your phone…',
+                  style: TextStyle(color: pal.textHi),
                 ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                flex: 1,
-                child: TextField(
-                  controller: _portCtrl,
-                  enabled: !scanning,
-                  keyboardType: TextInputType.number,
-                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  decoration: const InputDecoration(labelText: 'Port'),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          if (_pairing.found.length > 1) ...[
+              ],
+            ),
+          ] else if (_pairing.found.isNotEmpty) ...[
             Align(
               alignment: Alignment.centerLeft,
-              child: Text('Found devices — tap to connect:',
-                  style: TextStyle(color: pal.textLo, fontSize: 12)),
+              child: Text('Tap your phone to connect:',
+                  style: TextStyle(color: pal.textLo, fontSize: 13)),
             ),
-            const SizedBox(height: 6),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: _pairing.found
-                  .map((ip) => ActionChip(
-                        label: Text(ip),
-                        onPressed: scanning ? null : () => _connect(ip),
-                      ))
-                  .toList(),
+            const SizedBox(height: 10),
+            ..._pairing.found.map((ip) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: () => _connect(ip),
+                      icon: const Icon(Icons.smartphone),
+                      label: Text(ip),
+                    ),
+                  ),
+                )),
+            const SizedBox(height: 4),
+            TextButton.icon(
+              onPressed: _scan,
+              icon: const Icon(Icons.refresh, size: 18),
+              label: const Text('Search again'),
             ),
-            const SizedBox(height: 12),
+          ] else ...[
+            FilledButton.icon(
+              onPressed: _scan,
+              icon: const Icon(Icons.wifi_find),
+              label: const Text('Search for my phone'),
+            ),
           ],
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: scanning ? null : _scan,
-                  icon: scanning
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Icon(Icons.wifi_find),
-                  label: Text(scanning ? 'Searching…' : 'Search again'),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: scanning ? null : () => _connect(_ipCtrl.text),
-                  icon: const Icon(Icons.link),
-                  label: const Text('Connect'),
-                ),
-              ),
-            ],
+          // Manual entry, tucked away for the non-technical default.
+          const SizedBox(height: 6),
+          TextButton(
+            onPressed: () => setState(() => _manual = !_manual),
+            child: Text(_manual ? 'Hide manual entry' : 'Enter phone IP manually',
+                style: TextStyle(color: pal.textLo, fontSize: 12)),
           ),
+          if (_manual)
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _ipCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Phone IP',
+                      hintText: 'e.g. 192.168.1.71',
+                    ),
+                    onSubmitted: (v) => _connect(v),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                FilledButton(
+                  onPressed: scanning ? null : () => _connect(_ipCtrl.text),
+                  child: const Text('Connect'),
+                ),
+              ],
+            ),
         ],
       ),
     );
@@ -302,7 +351,7 @@ class _DesktopPairingScreenState extends State<DesktopPairingScreen> {
           ),
           const SizedBox(height: 6),
           TextButton.icon(
-            onPressed: _busy ? null : () => _scan(),
+            onPressed: _busy ? null : _scan,
             icon: const Icon(Icons.arrow_back, size: 18),
             label: const Text('Back / find another device'),
           ),
