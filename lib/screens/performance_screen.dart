@@ -23,9 +23,11 @@ const List<String> kMonths = [
 ];
 
 final _n2 = NumberFormat('#,##0.##');
+final _pctFmt = NumberFormat('#,##0.00');
 String _money(double v, String cur) => money(v, currency: cur, decimals: 0);
-String _pct(double v) =>
-    '${v >= 0 ? '' : '-'}${NumberFormat('#,##0').format(v.abs())}%';
+// Two decimals so a real 12.73% TWR (or a small +0.4% month) is never rounded
+// away to a whole percent — a fund manager reads these figures precisely.
+String _pct(double v) => '${v >= 0 ? '' : '-'}${_pctFmt.format(v.abs())}%';
 
 /// A month plus its derived cumulative columns.
 class _Row {
@@ -425,7 +427,9 @@ class _PerformanceScreenState extends State<PerformanceScreen> {
                   _stat(pal, 'Wire out',
                       wire == 0 ? '—' : _money(wire, cur),
                       wire == 0 ? pal.textLo : pal.textHi),
-                  _stat(pal, 'Drawdown', wire == 0 ? '—' : _pct(ddPct),
+                  // Wire-out as a share of the ending balance (not a peak-to-
+                  // trough drawdown), so the label states exactly that.
+                  _stat(pal, 'Wire % of end', wire == 0 ? '—' : _pct(ddPct),
                       pal.textLo),
                 ]),
               ],
@@ -454,13 +458,16 @@ class _PerformanceScreenState extends State<PerformanceScreen> {
                   letterSpacing: 0.2,
                   fontWeight: FontWeight.w600)),
           const SizedBox(height: 3),
-          Text(value,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                  color: valueColor,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700)),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(value,
+                maxLines: 1,
+                style: TextStyle(
+                    color: valueColor,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700)),
+          ),
         ],
       );
 

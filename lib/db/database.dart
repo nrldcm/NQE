@@ -96,6 +96,18 @@ class LedgerDb {
           await d.execute(
               "ALTER TABLE perf_months ADD COLUMN account_id TEXT NOT NULL DEFAULT ''");
         } catch (_) {/* already present */}
+        // Attach any legacy (pre-v7, unscoped) monthly rows to the earliest
+        // book so historical performance isn't orphaned by the new per-book
+        // scoping. Harmless when there are no rows or no accounts.
+        try {
+          final first = await d.query('accounts',
+              columns: ['id'], orderBy: 'sort_order, created_at', limit: 1);
+          if (first.isNotEmpty) {
+            await d.update(
+                'perf_months', {'account_id': (first.first['id'] ?? '').toString()},
+                where: "account_id = '' OR account_id IS NULL");
+          }
+        } catch (_) {/* best-effort backfill */}
       },
     );
   }

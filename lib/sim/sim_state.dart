@@ -51,13 +51,13 @@ class SimState extends ChangeNotifier {
   List<SimTrade> trades = [];
   List<SimWatch> watch = [];
 
-  /// Every sandbox profile (trading account). The active one drives the trading
-  /// UI + engine via [_pf]; the rest are held so the header switcher can list
-  /// them and the Home AUM can roll up their equity. Positions for the
-  /// non-active profiles are snapshotted in [_posByAcct] for valuation only
-  /// (only the active profile's orders are matched by the engine).
+  /// Every sandbox profile (trading account). Each has a LIVE portfolio in
+  /// [_portfolios] (positions + open orders); the authority ticks every one, so
+  /// a profile you're not currently viewing still gets its orders filled and
+  /// its margin positions liquidated. The active profile is also [_pf] and
+  /// drives the trading UI.
   List<SimAccount> _accounts = [];
-  final Map<String, List<SimPosition>> _posByAcct = {};
+  final Map<String, SimPortfolio> _portfolios = {};
 
   /// Local (per-device) preference for which profile is shown. Not synced — it
   /// is only a view choice; the accounts themselves sync across devices.
@@ -127,32 +127,20 @@ class SimState extends ChangeNotifier {
   /// the sandbox's contribution to the Home 'Assets Under Management' total.
   double totalEquityIn(String base) {
     var sum = 0.0;
-    for (final a in _accounts) {
-      final isActive = a.id == _pf?.account.id;
-      final acct = isActive ? _pf!.account : a;
-      final positions = isActive
-          ? (_pf?.positions ?? const <SimPosition>[])
-          : (_posByAcct[a.id] ?? const <SimPosition>[]);
-      final pf = SimPortfolio(account: acct, positions: positions);
-      final eq =
-          SimEngine.equity(pf, priceOf, fxOf: (s) => _fxOfFor(s, acct.currency));
-      sum += _convertCcy(eq, acct.currency, base);
+    for (final pf in _portfolios.values) {
+      final eq = SimEngine.equity(pf, priceOf,
+          fxOf: (s) => _fxOfFor(s, pf.account.currency));
+      sum += _convertCcy(eq, pf.account.currency, base);
     }
     return sum;
   }
 
   /// Equity of a single profile in its OWN currency (for the switcher list).
   double equityOfProfile(String id) {
-    final idx = _accounts.indexWhere((x) => x.id == id);
-    if (idx < 0) return 0;
-    final a = _accounts[idx];
-    final isActive = a.id == _pf?.account.id;
-    final acct = isActive ? _pf!.account : a;
-    final positions = isActive
-        ? (_pf?.positions ?? const <SimPosition>[])
-        : (_posByAcct[a.id] ?? const <SimPosition>[]);
-    final pf = SimPortfolio(account: acct, positions: positions);
-    return SimEngine.equity(pf, priceOf, fxOf: (s) => _fxOfFor(s, acct.currency));
+    final pf = _portfolios[id];
+    if (pf == null) return 0;
+    return SimEngine.equity(pf, priceOf,
+        fxOf: (s) => _fxOfFor(s, pf.account.currency));
   }
 
   double _pxOr(String sym, double fallback) {
@@ -252,40 +240,45 @@ class SimState extends ChangeNotifier {
       return;
     }
     _accounts = accounts;
+    await _buildPortfolios(accounts);
     final acc = _pickActive(accounts);
     _activeId = acc.id;
-    final pos = await _db.positions(acc.id);
-    final ord = await _db.orders(acc.id, openOnly: true);
-    _pf = SimPortfolio(account: acc, positions: pos, orders: ord);
+    _pf = _portfolios[acc.id];
     trades = await _db.trades(acc.id);
     watch = await _db.watch(acc.id);
-    await _hydratePositionSnapshots(accounts);
 
     // Seed prices for everything we care about + the FX pairs used to convert
     // USD-quoted instruments into the peso base currency. Include every
-    // profile's holdings so the Home AUM roll-up can value them all.
-    final syms = <String>{
-      'BTCUSDT', 'ETHUSDT', 'AAPL', 'EURUSD', 'XAUUSD',
-      'USDPHP', 'USDJPY', 'USDCAD', 'USDCHF', 'GBPUSD', 'AUDUSD', 'NZDUSD',
-      for (final list in _posByAcct.values) ...list.map((e) => e.symbol),
-      ...ord.map((e) => e.symbol),
-      ...watch.map((e) => e.symbol),
-    };
-    price.subscribeAll(syms);
+    // profile's holdings so all engines tick and the AUM roll-up can value them.
+    price.subscribeAll(_allSymbols());
     price.rollPrevClose();
     loading = false;
     notifyListeners();
   }
 
-  /// Load position snapshots for every profile EXCEPT the active one (whose
-  /// live positions live in [_pf]). Used purely for cross-profile valuation.
-  Future<void> _hydratePositionSnapshots(List<SimAccount> accounts) async {
-    _posByAcct.clear();
+  /// Build a live portfolio (positions + open orders) for every profile, so the
+  /// engine can tick them all — not just the active one.
+  Future<void> _buildPortfolios(List<SimAccount> accounts) async {
+    _portfolios.clear();
     for (final a in accounts) {
-      if (a.id == _pf?.account.id) continue;
-      _posByAcct[a.id] = await _db.positions(a.id);
+      final pos = await _db.positions(a.id);
+      final ord = await _db.orders(a.id, openOnly: true);
+      _portfolios[a.id] =
+          SimPortfolio(account: a, positions: pos, orders: ord);
     }
   }
+
+  /// Every symbol we must keep priced: the seed set + FX pairs + all profiles'
+  /// positions/orders + the active watchlist.
+  Set<String> _allSymbols() => <String>{
+        'BTCUSDT', 'ETHUSDT', 'AAPL', 'EURUSD', 'XAUUSD',
+        'USDPHP', 'USDJPY', 'USDCAD', 'USDCHF', 'GBPUSD', 'AUDUSD', 'NZDUSD',
+        for (final pf in _portfolios.values) ...[
+          ...pf.positions.map((e) => e.symbol),
+          ...pf.orders.map((e) => e.symbol),
+        ],
+        ...watch.map((e) => e.symbol),
+      };
 
   /// Resolve which profile to show: the remembered one if it still exists,
   /// else the first.
@@ -320,19 +313,26 @@ class SimState extends ChangeNotifier {
   }
 
   void _onPrices() {
-    final pf = _pf;
-    if (pf == null) return;
+    if (_portfolios.isEmpty) return;
     // A mirror never matches orders / liquidates locally — the authority does
     // that and the result syncs back. It still repaints for live prices/P&L.
+    // The authority ticks EVERY profile (not just the active one) so resting
+    // orders fill and margin positions liquidate even while you're viewing a
+    // different profile.
     if (!mirror) {
-      final effect = SimEngine.onTick(pf,
-          priceOf: priceOf, nowMs: _now(), uid: uid, fxOf: fxOf);
-      if (effect.trades.isNotEmpty ||
-          effect.filledOrders.isNotEmpty ||
-          effect.liquidatedSymbols.isNotEmpty ||
-          effect.removedOrderIds.isNotEmpty) {
-        _noticeForEffect(effect);
-        _serial(() => _persist(effect));
+      for (final pf in _portfolios.values.toList()) {
+        final effect = SimEngine.onTick(pf,
+            priceOf: priceOf,
+            nowMs: _now(),
+            uid: uid,
+            fxOf: (s) => _fxOfFor(s, pf.account.currency));
+        if (effect.trades.isNotEmpty ||
+            effect.filledOrders.isNotEmpty ||
+            effect.liquidatedSymbols.isNotEmpty ||
+            effect.removedOrderIds.isNotEmpty) {
+          _noticeForEffect(effect);
+          _serial(() => _persist(effect, pf));
+        }
       }
     }
     notifyListeners();
@@ -353,24 +353,43 @@ class SimState extends ChangeNotifier {
   /// Apply and clear queued desktop commands (top-up / cash-out / reset).
   /// Authority-only; runs inside the serial queue (no nested _serial here).
   Future<void> _processIntents() async {
-    final acc = _pf?.account;
-    if (acc == null) return;
+    if (_accounts.isEmpty) return;
     final rows = await _db.intentRows();
     if (rows.isEmpty) return;
+    // Resolve each intent against the account it was issued for — NOT the
+    // phone's currently-viewed profile — since the desktop and phone are
+    // usually on different profiles.
+    final accounts = await _db.accounts();
+    var touched = false;
     for (final r in rows) {
-      final kind = (r['kind'] ?? '').toString();
-      final amount =
-          (r['amount'] is num) ? (r['amount'] as num).toDouble() : 0.0;
-      switch (kind) {
-        case 'topup':
-          if (amount > 0) await _applyTopUp(acc, amount);
-        case 'cashout':
-          if (amount > 0) await _applyCashOut(acc, amount);
-        case 'reset':
-          await _resetCore(acc);
+      final accId = (r['account_id'] ?? '').toString();
+      SimAccount? acc;
+      for (final a in accounts) {
+        if (a.id == accId) {
+          acc = a;
+          break;
+        }
+      }
+      acc ??= _pf?.account;
+      if (acc != null) {
+        final kind = (r['kind'] ?? '').toString();
+        final amount =
+            (r['amount'] is num) ? (r['amount'] as num).toDouble() : 0.0;
+        switch (kind) {
+          case 'topup':
+            if (amount > 0) await _applyTopUp(acc, amount);
+          case 'cashout':
+            if (amount > 0) await _applyCashOut(acc, amount);
+          case 'reset':
+            await _resetCore(acc);
+        }
+        touched = true;
       }
       await _db.deleteIntent((r['id'] ?? '').toString());
     }
+    // Rebuild the in-memory portfolios so the applied wallet/reset changes are
+    // reflected (and re-priced) across every profile, not just the active one.
+    if (touched) await _reloadFromDb();
     notifyListeners();
   }
 
@@ -396,24 +415,23 @@ class SimState extends ChangeNotifier {
     loading = false;
     _accounts = accounts;
     _activeId ??= _pf?.account.id;
+    await _buildPortfolios(accounts);
     final acc = _pickActive(accounts);
     _activeId = acc.id;
-    final pos = await _db.positions(acc.id);
-    final ord = await _db.orders(acc.id, openOnly: true);
-    _pf = SimPortfolio(account: acc, positions: pos, orders: ord);
+    _pf = _portfolios[acc.id];
     trades = await _db.trades(acc.id);
     watch = await _db.watch(acc.id);
-    await _hydratePositionSnapshots(accounts);
-    price.subscribeAll({
-      for (final list in _posByAcct.values) ...list.map((e) => e.symbol),
-      ...pos.map((e) => e.symbol),
-      ...ord.map((e) => e.symbol),
-      ...watch.map((e) => e.symbol),
-    });
+    price.subscribeAll(_allSymbols());
     notifyListeners();
   }
 
   // ---- profiles ------------------------------------------------------------
+
+  /// True when profile management (create/rename/delete) is allowed here. A
+  /// paired desktop mirror is a thin client whose account deletes/renames the
+  /// phone (source of truth) would reject or resurrect, so profiles are managed
+  /// on the phone only. Switching among synced profiles is always allowed.
+  bool get canManageProfiles => !mirror;
 
   /// Switch the active profile (a local, per-device view choice — persisted so
   /// it survives a restart, but never synced).
@@ -425,12 +443,14 @@ class SimState extends ChangeNotifier {
     await _serial(_reloadFromDb);
   }
 
-  /// Create a new sandbox profile and switch to it. Returns the new id.
+  /// Create a new sandbox profile and switch to it. Returns the new id (or the
+  /// current one if creation isn't allowed on a mirror).
   Future<String> createProfile({
     required String name,
     required String currency,
     required double startingCash,
   }) async {
+    if (mirror) return _pf?.account.id ?? '';
     final a = SimAccount(
       id: uid(),
       name: name.trim().isEmpty ? 'Profile' : name.trim(),
@@ -448,6 +468,7 @@ class SimState extends ChangeNotifier {
 
   /// Rename a profile.
   Future<void> renameProfile(String id, String name) async {
+    if (mirror) return;
     final n = name.trim();
     if (n.isEmpty) return;
     final idx = _accounts.indexWhere((x) => x.id == id);
@@ -462,6 +483,7 @@ class SimState extends ChangeNotifier {
   /// Delete a profile (keeps at least one). Falls back to the first remaining
   /// profile if the active one was removed.
   Future<bool> deleteProfile(String id) async {
+    if (mirror) return false;
     if (_accounts.length <= 1) return false;
     await _serial(() => _db.deleteAccount(id));
     if (_activeId == id) _activeId = null;
@@ -490,7 +512,7 @@ class SimState extends ChangeNotifier {
     final e = SimEngine.placeOrder(pf, order,
         priceOf: priceOf, nowMs: _now(), uid: uid, fxOf: fxOf);
     if (e.rejected) return e.rejectReason;
-    await _serial(() => _persist(e));
+    await _serial(() => _persist(e, pf));
     _noticeForEffect(e, placed: true);
     notifyListeners();
     return null;
@@ -538,23 +560,32 @@ class SimState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// The reset itself (no _serial — call inside a serial task).
+  /// The reset itself (no _serial — call inside a serial task). Operates on the
+  /// GIVEN account (which may not be the active one, e.g. a forwarded reset).
   Future<void> _resetCore(SimAccount acc) async {
     acc.cash = acc.startingCash;
     acc.realizedPnl = 0;
     acc.updatedAtMs = _now();
-    for (final p in List<SimPosition>.from(positions)) {
+    final pf = _portfolios[acc.id];
+    final toClose = pf != null
+        ? List<SimPosition>.from(pf.positions)
+        : await _db.positions(acc.id);
+    for (final p in toClose) {
       await _db.deletePosition(p.id);
     }
     // Clear ALL orders — open AND filled/closed history — not just the ones
     // currently open, so a reset truly wipes the sandbox order history.
     await _db.clearOrders(acc.id);
-    _pf = SimPortfolio(account: acc);
     await _db.upsertAccount(acc);
     // Clear the blotter too, so the Overview (fees, trade count, win rate)
     // matches the restored balance instead of showing pre-reset history.
     await _db.clearTrades(acc.id);
-    trades = [];
+    final fresh = SimPortfolio(account: acc);
+    _portfolios[acc.id] = fresh;
+    if (acc.id == _pf?.account.id) {
+      _pf = fresh;
+      trades = [];
+    }
   }
 
   /// Wallet top-up: add virtual cash to Free Cash. The deposit basis
@@ -645,9 +676,7 @@ class SimState extends ChangeNotifier {
 
   // ---- persistence + notifications ----------------------------------------
 
-  Future<void> _persist(SimEffect e) async {
-    final pf = _pf;
-    if (pf == null) return;
+  Future<void> _persist(SimEffect e, SimPortfolio pf) async {
     await _db.upsertAccount(pf.account);
     for (final t in e.trades) {
       await _db.insertTrade(t);
@@ -667,7 +696,8 @@ class SimState extends ChangeNotifier {
     for (final o in e.filledOrders) {
       await _db.upsertOrder(o); // status now filled (kept for history)
     }
-    if (e.trades.isNotEmpty) {
+    // Only the active profile's blotter is displayed, so refresh it alone.
+    if (e.trades.isNotEmpty && pf.account.id == _pf?.account.id) {
       trades = await _db.trades(pf.account.id);
     }
   }

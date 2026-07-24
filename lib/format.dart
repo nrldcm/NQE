@@ -26,8 +26,8 @@ String compactMoney(double v, {String currency = 'PHP'}) {
   return f.format(v);
 }
 
-String signedMoney(double v, {String currency = 'PHP'}) {
-  final s = money(v.abs(), currency: currency);
+String signedMoney(double v, {String currency = 'PHP', int decimals = 2}) {
+  final s = money(v.abs(), currency: currency, decimals: decimals);
   if (v > 0) return '+$s';
   if (v < 0) return '-$s';
   return s;

@@ -587,12 +587,12 @@ class _MonthlyTable extends StatelessWidget {
             base.copyWith(fontWeight: FontWeight.w700),
             Alignment.centerLeft,
           ),
-          _cell(money(s.startCap, currency: cur), _wNum, lo,
+          _cell(money(s.startCap, currency: cur, decimals: 0), _wNum, lo,
               Alignment.centerRight),
-          _cell(money(s.endCap, currency: cur), _wNum, base,
+          _cell(money(s.endCap, currency: cur, decimals: 0), _wNum, base,
               Alignment.centerRight),
           _cell(
-            signedMoney(s.pnl, currency: cur),
+            signedMoney(s.pnl, currency: cur, decimals: 0),
             _wNum,
             base.copyWith(
                 color: NqeColors.pnl(s.pnl), fontWeight: FontWeight.w700),
@@ -616,7 +616,13 @@ class _MonthlyTable extends StatelessWidget {
       width: width,
       child: Align(
         alignment: align,
-        child: Text(text, style: style, maxLines: 1),
+        // Scale down rather than clip, so a large balance never paints past its
+        // column and overlaps the neighbour.
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: align,
+          child: Text(text, style: style, maxLines: 1),
+        ),
       ),
     );
   }

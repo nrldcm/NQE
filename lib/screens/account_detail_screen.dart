@@ -593,7 +593,7 @@ class _CashRow extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           Text(
-            money(cashflow.amount, currency: account.currency),
+            '${deposit ? '+' : '−'}${money(cashflow.amount, currency: account.currency)}',
             style: TextStyle(
               color: color,
               fontSize: 15,

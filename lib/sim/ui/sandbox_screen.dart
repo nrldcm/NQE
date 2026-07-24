@@ -693,7 +693,7 @@ class _ProfileSheetState extends State<_ProfileSheet> {
                               fontSize: 18,
                               fontWeight: FontWeight.w800)),
                       const Spacer(),
-                      if (!_creating)
+                      if (!_creating && simState.canManageProfiles)
                         TextButton.icon(
                           onPressed: () => setState(() => _creating = true),
                           icon: const Icon(Icons.add, size: 18),
@@ -758,19 +758,21 @@ class _ProfileSheetState extends State<_ProfileSheet> {
                     ],
                   ),
                 ),
-                PopupMenuButton<String>(
-                  icon: Icon(Icons.more_horiz, color: pal.textLo),
-                  onSelected: (v) {
-                    if (v == 'rename') _renameDialog(a);
-                    if (v == 'delete') _deleteDialog(a);
-                  },
-                  itemBuilder: (_) => [
-                    const PopupMenuItem(value: 'rename', child: Text('Rename')),
-                    if (simState.profiles.length > 1)
+                if (simState.canManageProfiles)
+                  PopupMenuButton<String>(
+                    icon: Icon(Icons.more_horiz, color: pal.textLo),
+                    onSelected: (v) {
+                      if (v == 'rename') _renameDialog(a);
+                      if (v == 'delete') _deleteDialog(a);
+                    },
+                    itemBuilder: (_) => [
                       const PopupMenuItem(
-                          value: 'delete', child: Text('Delete')),
-                  ],
-                ),
+                          value: 'rename', child: Text('Rename')),
+                      if (simState.profiles.length > 1)
+                        const PopupMenuItem(
+                            value: 'delete', child: Text('Delete')),
+                    ],
+                  ),
               ],
             ),
           ),
