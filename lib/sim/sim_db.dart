@@ -1,6 +1,7 @@
 // Isolated persistence for the Sandbox — its OWN SQLite file so simulation data
 // can never mix with the real fund ledger. Works on mobile (sqflite) and
 // desktop (sqflite_common_ffi via the global databaseFactory set in main()).
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
@@ -26,6 +27,21 @@ class SimDb {
   Future<Database> get db async => _db ??= await _open();
 
   Future<Database> _open() async {
+    // Web thin client: a pure IN-MEMORY sandbox DB (sqflite_common_ffi_web /
+    // WASM). No path_provider / dart:io on web — nothing persists across
+    // reloads and the phone stays the source of truth.
+    if (kIsWeb) {
+      return databaseFactory.openDatabase(
+        inMemoryDatabasePath,
+        options: OpenDatabaseOptions(
+          version: 4,
+          onConfigure: (d) async => d.execute('PRAGMA foreign_keys = ON'),
+          // A fresh in-memory DB is always created, never upgraded, so onCreate
+          // fully builds the schema — no onUpgrade path needed on web.
+          onCreate: (d, _) async => _create(d),
+        ),
+      );
+    }
     // The desktop mirror keeps no persistent database — a scratch file in the
     // temp dir that's WIPED on every launch, so it starts empty and is filled
     // purely by what the phone syncs over. (A raw ':memory:' DB is unreliable

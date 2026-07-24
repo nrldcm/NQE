@@ -12,6 +12,7 @@
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:cryptography/cryptography.dart';
 import 'package:local_auth/local_auth.dart';
 import 'package:local_auth_android/local_auth_android.dart';
@@ -66,6 +67,9 @@ class AuthService {
   }
 
   Future<bool> canUseBiometrics() async {
+    // Web is PIN-only: local_auth has no browser implementation. Guarding here
+    // keeps every biometric caller (lock/onboarding/settings) PIN-only on web.
+    if (kIsWeb) return false;
     try {
       final supported = await _localAuth.isDeviceSupported();
       final canCheck = await _localAuth.canCheckBiometrics;
@@ -76,6 +80,7 @@ class AuthService {
   }
 
   Future<List<BiometricType>> availableBiometrics() async {
+    if (kIsWeb) return const [];
     try {
       return await _localAuth.getAvailableBiometrics();
     } catch (_) {
@@ -85,6 +90,7 @@ class AuthService {
 
   /// Biometric OR device-credential (PIN/pattern/password) via the OS.
   Future<bool> authenticateBiometric() async {
+    if (kIsWeb) return false;
     try {
       return await _localAuth.authenticate(
         localizedReason: 'Unlock your NQE ledger',

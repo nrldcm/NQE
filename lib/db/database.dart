@@ -2,6 +2,7 @@
 // kill mid-write can never leave the ledger half-updated — the core defence
 // against corruption. Imports run inside a single transaction: either the whole
 // snapshot is applied or nothing is.
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
@@ -48,6 +49,21 @@ class LedgerDb {
   }
 
   Future<Database> _open() async {
+    // Web thin client: a pure IN-MEMORY ledger (sqflite_common_ffi_web / WASM).
+    // No path_provider / dart:io on web — the phone stays the source of truth
+    // and nothing persists across reloads.
+    if (kIsWeb) {
+      return databaseFactory.openDatabase(
+        inMemoryDatabasePath,
+        options: OpenDatabaseOptions(
+          version: _kDbSchemaVersion,
+          onConfigure: (d) async => d.execute('PRAGMA foreign_keys = ON'),
+          onCreate: (d, _) async => _createSchema(d),
+          // A fresh in-memory DB is always created, never upgraded, so onCreate
+          // fully builds the schema — no onUpgrade path needed on web.
+        ),
+      );
+    }
     // Desktop mirror: a scratch ledger file WIPED on every launch, so it starts
     // empty and is filled purely by what the phone syncs over — nothing
     // persists. (A temp file rather than ':memory:', whose onCreate is

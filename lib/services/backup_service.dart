@@ -8,6 +8,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:file_picker/file_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:path/path.dart' as p;
@@ -46,6 +47,12 @@ class BackupService {
   /// Produce the encrypted backup and open the share sheet (Drive, etc.).
   /// Best-effort deletes the temp file afterwards.
   Future<void> exportAndShare({String passphrase = ''}) async {
+    // TODO(web): file share/download not wired up on web yet (uses dart:io temp
+    // files + the native share sheet). The web build is a thin mirror client, so
+    // fail with a clear message rather than crashing.
+    if (kIsWeb) {
+      throw CryptoException('Backup export is not available on web yet.');
+    }
     final snap = await LedgerDb.instance.snapshot();
     final bytes = await CryptoService.instance
         .encryptJson(snap.toJson(), passphrase: passphrase);
@@ -80,6 +87,11 @@ class BackupService {
   /// Let the user pick a file and return its bytes (size-capped). Null if the
   /// user cancelled. Lets the caller decide about passphrases before importing.
   Future<Uint8List?> pickFileBytes() async {
+    // TODO(web): file-picker restore not wired up on web yet (uses a dart:io
+    // File path). Fail with a clear message rather than crashing.
+    if (kIsWeb) {
+      throw CryptoException('Backup restore is not available on web yet.');
+    }
     // The system file picker backgrounds the app; suppress the resume-time
     // relock so returning with a file doesn't interrupt the restore with a
     // PIN / fingerprint prompt.

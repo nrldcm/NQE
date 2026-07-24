@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:windows_single_instance/windows_single_instance.dart';
 
@@ -24,6 +25,20 @@ Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
   // Route uncaught framework/platform errors to the on-device rotating log.
   ErrorLog.instance.installGlobalHandlers();
+
+  // Web (Phase A thin client): run the SAME desktop mirror shell, but with an
+  // in-memory SQLite (sqflite_common_ffi_web / WASM) — nothing persists on web,
+  // the phone stays the single source of truth. No window_manager / single-
+  // instance / Platform here: those are dart:io/native and would crash the web
+  // boot. Biometric is intentionally excluded on web (PIN only).
+  if (kIsWeb) {
+    databaseFactory = databaseFactoryFfiWeb;
+    LedgerDb.ephemeral = true;
+    SimDb.ephemeral = true;
+    await themeController.load();
+    runApp(const DesktopApp());
+    return;
+  }
 
   final isDesktop = !kIsWeb &&
       (Platform.isWindows || Platform.isLinux || Platform.isMacOS);

@@ -4,6 +4,7 @@
 // No-op off Android.
 import 'dart:io' show Platform;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 class SimNotify {
@@ -16,7 +17,8 @@ class SimNotify {
   int _id = 1;
 
   Future<void> _ensure() async {
-    if (_ready || !Platform.isAndroid) return;
+    // TODO(web): no system notifications on web (Platform is dart:io). No-op.
+    if (kIsWeb || _ready || !Platform.isAndroid) return;
     const init = InitializationSettings(
       android: AndroidInitializationSettings('@mipmap/ic_launcher'),
     );
@@ -35,7 +37,8 @@ class SimNotify {
 
   /// Fire-and-forget: post a system notification (Android only).
   Future<void> show(String title, String body) async {
-    if (!Platform.isAndroid) return;
+    // TODO(web): no system notifications on web. In-app banners still show.
+    if (kIsWeb || !Platform.isAndroid) return;
     try {
       await _ensure();
       await _plugin.show(

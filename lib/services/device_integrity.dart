@@ -5,6 +5,7 @@
 // app can never brick itself where the signal is unavailable.
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 
 class DeviceIntegrity {
@@ -14,6 +15,9 @@ class DeviceIntegrity {
 
   /// True when Developer options or USB debugging is switched on (Android only).
   static Future<bool> developerOptionsEnabled() async {
+    // Fail-open on web: `Platform` is dart:io and unavailable in the browser,
+    // and there is no Android dev-options signal there anyway.
+    if (kIsWeb) return false;
     if (!Platform.isAndroid) return false;
     try {
       final v = await _ch.invokeMethod<bool>('devOptionsEnabled');

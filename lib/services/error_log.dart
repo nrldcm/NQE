@@ -47,6 +47,14 @@ class ErrorLog {
 
   /// Append a timestamped entry to today's log file.
   Future<void> log(String message, {Object? error, StackTrace? stack}) async {
+    // TODO(web): no on-device file logging on web (no dart:io). Fall back to the
+    // console so uncaught errors are still surfaced in the browser dev tools.
+    if (kIsWeb) {
+      if (kDebugMode) {
+        debugPrint('[ErrorLog] $message${error != null ? ' — $error' : ''}');
+      }
+      return;
+    }
     try {
       final now = DateTime.now();
       final dir = await _logDir();
@@ -91,7 +99,11 @@ class ErrorLog {
   }
 
   /// Where the log files live (for showing the user in Settings).
-  Future<String> dirPath() async => (await _logDir()).path;
+  Future<String> dirPath() async {
+    // TODO(web): no filesystem log directory on web.
+    if (kIsWeb) return 'unavailable on web';
+    return (await _logDir()).path;
+  }
 
   /// Install global handlers so uncaught framework/platform errors are logged.
   void installGlobalHandlers() {
