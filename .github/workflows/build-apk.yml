@@ -73,9 +73,9 @@ jobs:
       - name: Generate launcher icons
         run: dart run flutter_launcher_icons
 
-      # Version comes from pubspec (single source of truth) so every artifact —
-      # APK and the desktop .exe — carries the SAME version, and pushes don't
-      # spawn a new versioned release each time. Build number is monotonic.
+      # Version comes from pubspec (single source of truth) so the APK carries a
+      # stable version, and pushes don't spawn a new versioned release each
+      # time. Build number is monotonic.
       - name: Compute version
         id: ver
         run: |
@@ -105,9 +105,9 @@ jobs:
           name: NQE-apk
           path: dist/*.apk
 
-      # ONE release for everything. Both this workflow (APK) and the desktop
-      # workflow (.exe) publish to the same `latest` tag, so a single release
-      # holds both installers — nothing fragmented across versioned releases.
+      # ONE release for everything, published to the `latest` tag. The Windows
+      # desktop (.exe) build has been deprecated — the app now ships as the
+      # Android APK plus the phone-served web app, so no separate installer.
       - name: Publish single release (main)
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
@@ -118,7 +118,6 @@ jobs:
             NQE v${{ steps.ver.outputs.version }} — Funds managed by Willong Capital.
 
             • Android — install `NQE-v${{ steps.ver.outputs.version }}.apk`
-            • Windows — run `NQE-v${{ steps.ver.outputs.version }}.exe` (single file)
 
             (On Android you may need to allow "install from unknown sources".)
           files: dist/*.apk
