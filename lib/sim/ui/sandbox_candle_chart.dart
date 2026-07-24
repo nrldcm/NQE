@@ -4,8 +4,11 @@
 // read-out, and toggleable technical indicators — MA / EMA / Bollinger overlays
 // plus Volume, RSI and MACD sub-panels. Real Binance candles for crypto on the
 // Live feed; a realistic simulated series otherwise.
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart' show DateFormat;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../theme.dart';
 import '../sim_candles.dart';
@@ -63,6 +66,27 @@ class _Shape {
   String label;
   _Shape(this.type, this.pts, {this.label = ''});
   _Shape copy() => _Shape(type, [for (final p in pts) p], label: label);
+
+  Map<String, Object?> toJson() => {
+        't': type.index,
+        'l': label,
+        'p': [
+          for (final o in pts) [o.dx, o.dy]
+        ],
+      };
+
+  static _Shape? fromJson(Map<String, Object?> m) {
+    final ti = (m['t'] as num?)?.toInt() ?? -1;
+    if (ti < 0 || ti >= _DrawTool.values.length) return null;
+    final raw = (m['p'] as List?) ?? const [];
+    final pts = <Offset>[
+      for (final e in raw)
+        if (e is List && e.length >= 2)
+          Offset((e[0] as num).toDouble(), (e[1] as num).toDouble()),
+    ];
+    if (pts.isEmpty) return null;
+    return _Shape(_DrawTool.values[ti], pts, label: (m['l'] ?? '').toString());
+  }
 }
 
 class SandboxCandleChart extends StatefulWidget {
@@ -100,6 +124,61 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
   // positions to price / fractional-x exactly like the painter does.
   double _lo = 0, _hi = 1, _plotW = 1;
   List<SimCandle> _lastCandles = const [];
+
+  // ---- drawing persistence (per symbol) ------------------------------------
+  // Drawings are saved keyed by symbol, so each stock/coin/pair keeps its own
+  // lines/levels/annotations across symbol switches and app restarts.
+  String get _drawKey => 'sandbox.draw.${widget.symbol}';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadShapes();
+  }
+
+  @override
+  void didUpdateWidget(covariant SandboxCandleChart old) {
+    super.didUpdateWidget(old);
+    if (old.symbol != widget.symbol) {
+      // Switched instrument — drop the current drawings and load this one's.
+      _shapes.clear();
+      _preview = null;
+      _selected = -1;
+      _loadShapes();
+    }
+  }
+
+  Future<void> _loadShapes() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_drawKey);
+      if (!mounted) return;
+      final loaded = <_Shape>[];
+      if (raw != null && raw.isNotEmpty) {
+        for (final e in (jsonDecode(raw) as List)) {
+          final s = _Shape.fromJson(Map<String, Object?>.from(e as Map));
+          if (s != null) loaded.add(s);
+        }
+      }
+      setState(() {
+        _shapes
+          ..clear()
+          ..addAll(loaded);
+      });
+    } catch (_) {/* corrupt / missing — start blank */}
+  }
+
+  Future<void> _saveShapes() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (_shapes.isEmpty) {
+        await prefs.remove(_drawKey);
+      } else {
+        await prefs.setString(
+            _drawKey, jsonEncode([for (final s in _shapes) s.toJson()]));
+      }
+    } catch (_) {/* best-effort */}
+  }
 
   void _maybeFetchLive() {
     final live = simState.price.mode == FeedMode.live;
@@ -330,7 +409,10 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
         onTapUp: (d) => _onCursorTap(d.localPosition),
         onPanStart: (d) => _onMoveStart(d.localPosition),
         onPanUpdate: (d) => _onMoveUpdate(d.localPosition),
-        onPanEnd: (_) => _dragLast = null,
+        onPanEnd: (_) {
+          _dragLast = null;
+          _saveShapes(); // persist the new position/shape
+        },
         child: painter,
       );
     }
@@ -399,6 +481,7 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
       _selected = _shapes.length - 1;
       _tool = _DrawTool.cursor; // one shape per pick, like TradingView
     });
+    _saveShapes();
   }
 
   Future<void> _addText(Offset d) async {
@@ -432,6 +515,7 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
       _selected = _shapes.length - 1;
       _tool = _DrawTool.cursor;
     });
+    _saveShapes();
   }
 
   // ---- select / move -------------------------------------------------------
@@ -551,6 +635,7 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
       _shapes.removeAt(_selected);
       _selected = -1;
     });
+    _saveShapes();
   }
 
   /// TradingView-style vertical rail of drawing tools on the chart's left edge.
@@ -655,6 +740,7 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
                           _preview = null;
                           _selected = -1;
                         });
+                        _saveShapes();
                       }
                     },
               borderRadius: BorderRadius.circular(6),
