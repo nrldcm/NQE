@@ -388,11 +388,13 @@ class _OverviewStrip extends StatelessWidget {
 
     // Wrap (not a fixed 6-wide Row) so on a narrow center column the cards flow
     // to a second line and stay legible instead of being crushed to ~40px each.
+    // A fixed height keeps every card the SAME size — cards with a sub-label
+    // (e.g. Win rate's "N closed") no longer stand taller than the rest.
     return Wrap(
       spacing: 10,
       runSpacing: 10,
       children: [
-        for (final c in cards) SizedBox(width: 158, child: c),
+        for (final c in cards) SizedBox(width: 158, height: 88, child: c),
       ],
     );
   }

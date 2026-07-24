@@ -44,6 +44,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   static final bool _isDesktop =
       !kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS);
 
+  /// The desktop app AND the browser web app are thin clients of the phone, so
+  /// phone-only sections (Security, Backup, Developer) are hidden on both.
+  static final bool _hideOnClient = _isDesktop || kIsWeb;
+
   @override
   void initState() {
     super.initState();
@@ -442,8 +446,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ThemeMode.system, Icons.brightness_auto, 'System', pal),
               ]),
               // Security (lock / PIN / biometric) is managed on the phone; the
-              // desktop just mirrors it, so hide the whole section there.
-              if (!_isDesktop) ...[
+              // desktop + web clients just mirror it, so hide it on both.
+              if (!_hideOnClient) ...[
               const SizedBox(height: 20),
               _sectionLabel('Security', pal),
               _card(pal, [
@@ -484,12 +488,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ]),
               ],
-              const SizedBox(height: 20),
-              _sectionLabel('Desktop Mode', pal),
-              _deviceSyncSection(pal),
-              // Backup lives on the phone (the source of truth); the desktop is
-              // a stateless mirror, so hide the whole Backup section there.
-              if (!_isDesktop) ...[
+              // Desktop Mode: the phone hosts the server; the native desktop
+              // shows its sync status. The BROWSER web app is itself the client
+              // being served, so it has no Desktop Mode of its own — hide it.
+              if (!kIsWeb) ...[
+                const SizedBox(height: 20),
+                _sectionLabel('Desktop Mode', pal),
+                _deviceSyncSection(pal),
+              ],
+              // Backup lives on the phone (the source of truth); the desktop +
+              // web clients are stateless mirrors, so hide it on both.
+              if (!_hideOnClient) ...[
                 const SizedBox(height: 20),
                 _sectionLabel('Backup', pal),
                 _card(pal, [
@@ -536,8 +545,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       MaterialPageRoute(builder: (_) => const AboutScreen())),
                 ),
               ]),
-              // Developer / API-key setup belongs on the phone, not the mirror.
-              if (!_isDesktop) ...[
+              // Developer / API-key setup belongs on the phone, not the mirror
+              // or the browser client.
+              if (!_hideOnClient) ...[
                 const SizedBox(height: 20),
                 _sectionLabel('Developer', pal),
                 _card(pal, [
