@@ -53,16 +53,25 @@ class LedgerDb {
     // No path_provider / dart:io on web — the phone stays the source of truth
     // and nothing persists across reloads.
     if (kIsWeb) {
-      return databaseFactory.openDatabase(
-        inMemoryDatabasePath,
+      // ':memory:' is unreliable with sqflite_common_ffi_web (lost onCreate /
+      // fresh empty connection → "no such table"). Use a NAMED IndexedDB DB
+      // DELETED on every launch: starts empty with a guaranteed schema, filled
+      // purely by the phone's sync — nothing meaningful persists across reloads.
+      const name = 'nqe_ledger_web.db';
+      try {
+        await databaseFactory.deleteDatabase(name);
+      } catch (_) {/* first run — nothing to delete */}
+      final db = await databaseFactory.openDatabase(
+        name,
         options: OpenDatabaseOptions(
           version: _kDbSchemaVersion,
+          singleInstance: true,
           onConfigure: (d) async => d.execute('PRAGMA foreign_keys = ON'),
           onCreate: (d, _) async => _createSchema(d),
-          // A fresh in-memory DB is always created, never upgraded, so onCreate
-          // fully builds the schema — no onUpgrade path needed on web.
         ),
       );
+      await _createSchema(db); // guarantee tables (all IF NOT EXISTS)
+      return db;
     }
     // Desktop mirror: a scratch ledger file WIPED on every launch, so it starts
     // empty and is filled purely by what the phone syncs over — nothing

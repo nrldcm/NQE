@@ -4,6 +4,7 @@
 // session. No QR pairing, no local database: the phone stays the source of
 // truth. The access code is kept in memory only (never localStorage).
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../sync/sync_client.dart';
 import '../theme.dart';
@@ -27,6 +28,13 @@ class _WebConnectScreenState extends State<WebConnectScreen> {
   void initState() {
     super.initState();
     SyncClient.instance.addListener(_onSync);
+    // Less-hassle path: if the URL carries the code (e.g. a scanned QR link
+    // `…/?code=123456`), prefill it and connect automatically.
+    final urlCode = Uri.base.queryParameters['code']?.trim() ?? '';
+    if (urlCode.isNotEmpty) {
+      _code.text = urlCode;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _connect());
+    }
   }
 
   @override
@@ -108,11 +116,19 @@ class _WebConnectScreenState extends State<WebConnectScreen> {
                     controller: _code,
                     autofocus: true,
                     enabled: !_connecting,
+                    keyboardType: TextInputType.number,
+                    maxLength: 6,
+                    inputFormatters: [
+                      FilteringTextInputFormatter.digitsOnly,
+                    ],
+                    style: const TextStyle(
+                        fontSize: 22, letterSpacing: 6, fontWeight: FontWeight.w700),
+                    textAlign: TextAlign.center,
                     onSubmitted: (_) => _connect(),
                     decoration: InputDecoration(
-                      labelText: 'Access code',
+                      labelText: '6-digit access code',
+                      counterText: '',
                       errorText: _error,
-                      prefixIcon: const Icon(Icons.vpn_key_outlined),
                     ),
                   ),
                   const SizedBox(height: 18),

@@ -761,9 +761,12 @@ class SyncServer extends ChangeNotifier {
   }
 
   String _generateKey() {
+    // A 6-digit access code — easy to read off the phone and type into the
+    // browser. Entropy is low (~20 bits) so it leans on the LAN scope, the
+    // single-peer cap and the failed-auth throttle; use a tunnel/HTTPS for
+    // internet exposure. The live sync frames are still AES-GCM-encrypted under
+    // a key HKDF-derived from this code.
     final rand = Random.secure();
-    final bytes = List<int>.generate(24, (_) => rand.nextInt(256));
-    // URL-safe, no padding — fits cleanly in the QR pairing URI.
-    return base64Url.encode(bytes).replaceAll('=', '');
+    return (100000 + rand.nextInt(900000)).toString();
   }
 }

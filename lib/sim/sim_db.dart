@@ -31,16 +31,28 @@ class SimDb {
     // WASM). No path_provider / dart:io on web — nothing persists across
     // reloads and the phone stays the source of truth.
     if (kIsWeb) {
-      return databaseFactory.openDatabase(
-        inMemoryDatabasePath,
+      // A raw ':memory:' DB is UNRELIABLE with sqflite_common_ffi_web —
+      // onCreate can be lost / a fresh empty connection is handed to queries,
+      // giving "no such table". Mirror the native ephemeral fix: a NAMED DB
+      // (in IndexedDB) that's DELETED on every launch, so it starts empty with
+      // a guaranteed schema and is filled purely by what the phone syncs over —
+      // nothing meaningful persists across reloads.
+      const name = 'nqe_sandbox_web.db';
+      try {
+        await databaseFactory.deleteDatabase(name);
+      } catch (_) {/* first run — nothing to delete */}
+      final db = await databaseFactory.openDatabase(
+        name,
         options: OpenDatabaseOptions(
           version: 4,
+          singleInstance: true,
           onConfigure: (d) async => d.execute('PRAGMA foreign_keys = ON'),
-          // A fresh in-memory DB is always created, never upgraded, so onCreate
-          // fully builds the schema — no onUpgrade path needed on web.
           onCreate: (d, _) async => _create(d),
         ),
       );
+      // Belt-and-suspenders: guarantee the tables exist (all IF NOT EXISTS).
+      await _create(db);
+      return db;
     }
     // The desktop mirror keeps no persistent database — a scratch file in the
     // temp dir that's WIPED on every launch, so it starts empty and is filled

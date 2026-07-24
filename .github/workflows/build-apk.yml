@@ -81,6 +81,19 @@ jobs:
           flutter config --enable-web
           flutter create . --platforms=web --org com.willong --project-name nqe
           dart run sqflite_common_ffi_web:setup
+          # Brand the web app: title "NQE Web" + the NQE icon as the favicon /
+          # PWA icons (flutter create ships generic Flutter defaults).
+          sed -i 's#<title>[^<]*</title>#<title>NQE Web</title>#' web/index.html || true
+          sed -i 's#content="[^"]*"\s*/>\(\s*<!-- iOS meta\)#content="NQE Web"/>\1#' web/index.html || true
+          sed -i 's#"name": *"[^"]*"#"name": "NQE Web"#; s#"short_name": *"[^"]*"#"short_name": "NQE Web"#' web/manifest.json || true
+          if [ -f assets/icon/nqe_icon.png ]; then
+            cp assets/icon/nqe_icon.png web/favicon.png || true
+            mkdir -p web/icons
+            cp assets/icon/nqe_icon.png web/icons/Icon-192.png || true
+            cp assets/icon/nqe_icon.png web/icons/Icon-512.png || true
+            cp assets/icon/nqe_icon.png web/icons/Icon-maskable-192.png || true
+            cp assets/icon/nqe_icon.png web/icons/Icon-maskable-512.png || true
+          fi
           flutter build web --release --no-tree-shake-icons
           rm -rf assets/web
           mkdir -p assets/web
