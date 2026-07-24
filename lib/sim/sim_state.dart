@@ -3,6 +3,7 @@
 // SimDb, and raises in-app notifications (order filled, stop-loss / take-profit
 // hit, liquidation). Screens listen via ListenableBuilder, like `appState`.
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../format.dart';
 import '../util.dart';
@@ -50,6 +51,23 @@ class SimState extends ChangeNotifier {
   List<SimTrade> trades = [];
   List<SimWatch> watch = [];
 
+  /// Every sandbox profile (trading account). The active one drives the trading
+  /// UI + engine via [_pf]; the rest are held so the header switcher can list
+  /// them and the Home AUM can roll up their equity. Positions for the
+  /// non-active profiles are snapshotted in [_posByAcct] for valuation only
+  /// (only the active profile's orders are matched by the engine).
+  List<SimAccount> _accounts = [];
+  final Map<String, List<SimPosition>> _posByAcct = {};
+
+  /// Local (per-device) preference for which profile is shown. Not synced — it
+  /// is only a view choice; the accounts themselves sync across devices.
+  String? _activeId;
+  static const String _kActivePref = 'sandbox_active_profile';
+
+  /// All sandbox profiles, oldest first (creation order).
+  List<SimAccount> get profiles => List.unmodifiable(_accounts);
+  String? get activeId => _pf?.account.id;
+
   /// Notification history (newest first) + the latest one for a transient toast.
   final List<SimNotice> notices = [];
   SimNotice? lastNotice;
@@ -81,8 +99,12 @@ class SimState extends ChangeNotifier {
   /// FX multiplier from an instrument's quote currency to the account base
   /// (e.g. a US/crypto symbol quoted in USD → PHP). Rates are read live from
   /// the forex feed, so amounts auto-convert as USDPHP moves.
-  double fxOf(String symbol) {
-    final base = _pf?.account.currency ?? 'PHP';
+  double fxOf(String symbol) =>
+      _fxOfFor(symbol, _pf?.account.currency ?? 'PHP');
+
+  /// FX multiplier from [symbol]'s quote currency to an explicit [base] — used
+  /// to value profiles other than the active one against their own currency.
+  double _fxOfFor(String symbol, String base) {
     final quote = quoteCurrencyFor(symbol);
     if (quote == base) return 1.0;
     final a = _fxToUsd(quote);
@@ -90,6 +112,47 @@ class SimState extends ChangeNotifier {
     if (!(a > 0) || !(b > 0)) return 1.0;
     final m = a / b;
     return (m.isFinite && m > 0) ? m : 1.0;
+  }
+
+  /// Convert an amount between two currencies via the USD pivot.
+  double _convertCcy(double amount, String from, String to) {
+    if (from == to) return amount;
+    final a = _fxToUsd(from), b = _fxToUsd(to);
+    if (!(a > 0) || !(b > 0)) return amount;
+    final m = amount * a / b;
+    return m.isFinite ? m : amount;
+  }
+
+  /// Combined equity of EVERY sandbox profile, expressed in [base] currency —
+  /// the sandbox's contribution to the Home 'Assets Under Management' total.
+  double totalEquityIn(String base) {
+    var sum = 0.0;
+    for (final a in _accounts) {
+      final isActive = a.id == _pf?.account.id;
+      final acct = isActive ? _pf!.account : a;
+      final positions = isActive
+          ? (_pf?.positions ?? const <SimPosition>[])
+          : (_posByAcct[a.id] ?? const <SimPosition>[]);
+      final pf = SimPortfolio(account: acct, positions: positions);
+      final eq =
+          SimEngine.equity(pf, priceOf, fxOf: (s) => _fxOfFor(s, acct.currency));
+      sum += _convertCcy(eq, acct.currency, base);
+    }
+    return sum;
+  }
+
+  /// Equity of a single profile in its OWN currency (for the switcher list).
+  double equityOfProfile(String id) {
+    final idx = _accounts.indexWhere((x) => x.id == id);
+    if (idx < 0) return 0;
+    final a = _accounts[idx];
+    final isActive = a.id == _pf?.account.id;
+    final acct = isActive ? _pf!.account : a;
+    final positions = isActive
+        ? (_pf?.positions ?? const <SimPosition>[])
+        : (_posByAcct[a.id] ?? const <SimPosition>[]);
+    final pf = SimPortfolio(account: acct, positions: positions);
+    return SimEngine.equity(pf, priceOf, fxOf: (s) => _fxOfFor(s, acct.currency));
   }
 
   double _pxOr(String sym, double fallback) {
@@ -165,6 +228,7 @@ class SimState extends ChangeNotifier {
   Future<void> _load() async {
     loading = true;
     notifyListeners();
+    _activeId ??= await _readActivePref();
     var accounts = await _db.accounts();
     // A mirror (paired desktop) must NOT create its own account — it waits for
     // the phone's account to sync in, or the two would never converge.
@@ -187,19 +251,23 @@ class SimState extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    final acc = accounts.first;
+    _accounts = accounts;
+    final acc = _pickActive(accounts);
+    _activeId = acc.id;
     final pos = await _db.positions(acc.id);
     final ord = await _db.orders(acc.id, openOnly: true);
     _pf = SimPortfolio(account: acc, positions: pos, orders: ord);
     trades = await _db.trades(acc.id);
     watch = await _db.watch(acc.id);
+    await _hydratePositionSnapshots(accounts);
 
     // Seed prices for everything we care about + the FX pairs used to convert
-    // USD-quoted instruments into the peso base currency.
+    // USD-quoted instruments into the peso base currency. Include every
+    // profile's holdings so the Home AUM roll-up can value them all.
     final syms = <String>{
       'BTCUSDT', 'ETHUSDT', 'AAPL', 'EURUSD', 'XAUUSD',
       'USDPHP', 'USDJPY', 'USDCAD', 'USDCHF', 'GBPUSD', 'AUDUSD', 'NZDUSD',
-      ...pos.map((e) => e.symbol),
+      for (final list in _posByAcct.values) ...list.map((e) => e.symbol),
       ...ord.map((e) => e.symbol),
       ...watch.map((e) => e.symbol),
     };
@@ -207,6 +275,38 @@ class SimState extends ChangeNotifier {
     price.rollPrevClose();
     loading = false;
     notifyListeners();
+  }
+
+  /// Load position snapshots for every profile EXCEPT the active one (whose
+  /// live positions live in [_pf]). Used purely for cross-profile valuation.
+  Future<void> _hydratePositionSnapshots(List<SimAccount> accounts) async {
+    _posByAcct.clear();
+    for (final a in accounts) {
+      if (a.id == _pf?.account.id) continue;
+      _posByAcct[a.id] = await _db.positions(a.id);
+    }
+  }
+
+  /// Resolve which profile to show: the remembered one if it still exists,
+  /// else the first.
+  SimAccount _pickActive(List<SimAccount> accounts) =>
+      accounts.firstWhere((a) => a.id == _activeId,
+          orElse: () => accounts.first);
+
+  Future<String?> _readActivePref() async {
+    try {
+      final p = await SharedPreferences.getInstance();
+      return p.getString(_kActivePref);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _writeActivePref(String id) async {
+    try {
+      final p = await SharedPreferences.getInstance();
+      await p.setString(_kActivePref, id);
+    } catch (_) {/* prefs unavailable — selection just won't persist */}
   }
 
   // Serial queue for sim DB writes + reloads, so a reload can never read the
@@ -294,20 +394,81 @@ class SimState extends ChangeNotifier {
     // Synced data has arrived — make sure the UI isn't still showing the
     // initial loading spinner (a mirror may never have run its own _load()).
     loading = false;
-    final prevId = _pf?.account.id;
-    final acc = accounts.firstWhere((a) => a.id == prevId,
-        orElse: () => accounts.first);
+    _accounts = accounts;
+    _activeId ??= _pf?.account.id;
+    final acc = _pickActive(accounts);
+    _activeId = acc.id;
     final pos = await _db.positions(acc.id);
     final ord = await _db.orders(acc.id, openOnly: true);
     _pf = SimPortfolio(account: acc, positions: pos, orders: ord);
     trades = await _db.trades(acc.id);
     watch = await _db.watch(acc.id);
+    await _hydratePositionSnapshots(accounts);
     price.subscribeAll({
+      for (final list in _posByAcct.values) ...list.map((e) => e.symbol),
       ...pos.map((e) => e.symbol),
       ...ord.map((e) => e.symbol),
       ...watch.map((e) => e.symbol),
     });
     notifyListeners();
+  }
+
+  // ---- profiles ------------------------------------------------------------
+
+  /// Switch the active profile (a local, per-device view choice — persisted so
+  /// it survives a restart, but never synced).
+  Future<void> switchProfile(String id) async {
+    if (id == _pf?.account.id) return;
+    if (!_accounts.any((a) => a.id == id)) return;
+    _activeId = id;
+    await _writeActivePref(id);
+    await _serial(_reloadFromDb);
+  }
+
+  /// Create a new sandbox profile and switch to it. Returns the new id.
+  Future<String> createProfile({
+    required String name,
+    required String currency,
+    required double startingCash,
+  }) async {
+    final a = SimAccount(
+      id: uid(),
+      name: name.trim().isEmpty ? 'Profile' : name.trim(),
+      currency: currency,
+      startingCash: startingCash <= 0 ? 100000 : startingCash,
+      createdAtMs: _now(),
+      updatedAtMs: _now(),
+    );
+    await _serial(() => _db.upsertAccount(a));
+    _activeId = a.id;
+    await _writeActivePref(a.id);
+    await _serial(_reloadFromDb);
+    return a.id;
+  }
+
+  /// Rename a profile.
+  Future<void> renameProfile(String id, String name) async {
+    final n = name.trim();
+    if (n.isEmpty) return;
+    final idx = _accounts.indexWhere((x) => x.id == id);
+    if (idx < 0) return;
+    final a = _accounts[idx];
+    a.name = n;
+    a.updatedAtMs = _now();
+    await _serial(() => _db.upsertAccount(a));
+    await _serial(_reloadFromDb);
+  }
+
+  /// Delete a profile (keeps at least one). Falls back to the first remaining
+  /// profile if the active one was removed.
+  Future<bool> deleteProfile(String id) async {
+    if (_accounts.length <= 1) return false;
+    await _serial(() => _db.deleteAccount(id));
+    if (_activeId == id) _activeId = null;
+    await _serial(_reloadFromDb);
+    final now = _pf?.account.id;
+    if (now != null) await _writeActivePref(now);
+    return true;
   }
 
   // ---- trading actions -----------------------------------------------------

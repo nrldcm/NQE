@@ -16,7 +16,6 @@ import '../../widgets/connection_watcher.dart';
 import '../../widgets/nqe_logo.dart';
 import '../books_screen.dart';
 import '../dashboard_screen.dart';
-import '../performance_screen.dart';
 import '../settings_screen.dart';
 import 'desktop_live.dart';
 import 'desktop_lock.dart';
@@ -318,8 +317,6 @@ class _DesktopShellState extends State<DesktopShell> {
         return const DesktopLiveScreen();
       case 3:
         return const SandboxScreen();
-      case 4:
-        return const PerformanceScreen();
       default:
         return const SettingsScreen();
     }
@@ -374,7 +371,6 @@ class _TopNav extends StatelessWidget {
         'Books'),
     (Icons.candlestick_chart_outlined, Icons.candlestick_chart, 'Live'),
     (Icons.science_outlined, Icons.science, 'Trade'),
-    (Icons.calendar_month_outlined, Icons.calendar_month, 'Performance'),
     (Icons.settings_outlined, Icons.settings, 'Settings'),
   ];
 

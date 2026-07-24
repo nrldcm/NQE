@@ -15,6 +15,7 @@ import 'editors/cashflow_edit_sheet.dart';
 import 'editors/dividend_edit_sheet.dart';
 import 'editors/holding_edit_sheet.dart';
 import 'editors/trade_edit_sheet.dart';
+import 'performance_screen.dart';
 
 class AccountDetailScreen extends StatefulWidget {
   final String accountId;
@@ -255,6 +256,8 @@ class _OverviewTab extends StatelessWidget {
             ),
           ],
         ),
+        const SizedBox(height: 12),
+        _PerformanceCard(account: account),
         const SizedBox(height: 16),
         EquityCurveChart(
             equityCurve(account, trades,
@@ -263,6 +266,56 @@ class _OverviewTab extends StatelessWidget {
         const SizedBox(height: 16),
         WinLossDonut(wins: m.wins, losses: m.losses),
       ],
+    );
+  }
+}
+
+/// Entry point to this book's own Monthly Performance tracker (its manually
+/// maintained month-by-month summary), scoped to the account.
+class _PerformanceCard extends StatelessWidget {
+  final Account account;
+  const _PerformanceCard({required this.account});
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = context.nqe;
+    return Material(
+      color: pal.surface,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () => Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => PerformanceScreen(
+              accountId: account.id, accountName: account.name),
+        )),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: pal.line),
+          ),
+          child: Row(children: [
+            Icon(Icons.calendar_month_outlined, size: 20, color: pal.textHi),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Monthly Performance',
+                      style: TextStyle(
+                          color: pal.textHi,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 2),
+                  Text('Month-by-month P&L, TWR & drawdown',
+                      style: TextStyle(color: pal.textLo, fontSize: 12)),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right, size: 20, color: pal.textLo),
+          ]),
+        ),
+      ),
     );
   }
 }

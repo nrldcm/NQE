@@ -423,15 +423,37 @@ class _Header extends StatelessWidget {
           Row(
             children: [
               Icon(Icons.science_outlined, size: 20, color: pal.textHi),
-              const SizedBox(width: 8),
-              // Always a simulation (no real orders); the badge only reflects
-              // whether the CHARTS/MARKETS data is live or simulated.
-              Text('Sandbox',
-                  style: TextStyle(
-                      color: pal.textHi,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800)),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
+              // Tappable profile switcher — the active profile's name with a
+              // dropdown chevron. Tapping opens the profile sheet (switch /
+              // create / rename / delete). Always a simulation (no real
+              // orders); the badge reflects only whether the data is live.
+              Flexible(
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: () => _openProfiles(context),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 4, vertical: 2),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Flexible(
+                          child: Text(simState.account?.name ?? 'Sandbox',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                  color: pal.textHi,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w800)),
+                        ),
+                        Icon(Icons.expand_more, size: 20, color: pal.textLo),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
@@ -586,6 +608,289 @@ class _Header extends StatelessWidget {
       ),
     );
     if (ok == true) simState.resetAccount();
+  }
+
+  void _openProfiles(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => const _ProfileSheet(),
+    );
+  }
+}
+
+/// Bottom sheet listing sandbox profiles: tap to switch, plus create / rename /
+/// delete. Each profile is its own isolated virtual account.
+class _ProfileSheet extends StatefulWidget {
+  const _ProfileSheet();
+
+  @override
+  State<_ProfileSheet> createState() => _ProfileSheetState();
+}
+
+class _ProfileSheetState extends State<_ProfileSheet> {
+  bool _creating = false;
+  final _name = TextEditingController();
+  final _cash = TextEditingController(text: '1,000,000');
+  String _cur = 'PHP';
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _cash.dispose();
+    super.dispose();
+  }
+
+  Future<void> _create() async {
+    final cash = double.tryParse(_cash.text.replaceAll(',', '').trim()) ?? 0;
+    await simState.createProfile(
+      name: _name.text,
+      currency: _cur,
+      startingCash: cash,
+    );
+    if (mounted) Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = context.nqe;
+    final bottom = MediaQuery.of(context).viewInsets.bottom;
+    return ListenableBuilder(
+      listenable: simState,
+      builder: (context, _) {
+        final profiles = simState.profiles;
+        final activeId = simState.activeId;
+        return Padding(
+          padding: EdgeInsets.only(bottom: bottom),
+          child: Container(
+            decoration: BoxDecoration(
+              color: pal.bg,
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(20)),
+            ),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 14),
+                      decoration: BoxDecoration(
+                          color: pal.line,
+                          borderRadius: BorderRadius.circular(2)),
+                    ),
+                  ),
+                  Row(
+                    children: [
+                      Text('Profiles',
+                          style: TextStyle(
+                              color: pal.textHi,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800)),
+                      const Spacer(),
+                      if (!_creating)
+                        TextButton.icon(
+                          onPressed: () => setState(() => _creating = true),
+                          icon: const Icon(Icons.add, size: 18),
+                          label: const Text('New'),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  if (_creating)
+                    _createForm(pal)
+                  else
+                    for (final a in profiles)
+                      _profileRow(pal, a, a.id == activeId),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _profileRow(NqePalette pal, SimAccount a, bool active) {
+    final eq = simState.equityOfProfile(a.id);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: active ? pal.surface2 : pal.surface,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: () async {
+            await simState.switchProfile(a.id);
+            if (mounted) Navigator.of(context).pop();
+          },
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                  color: active ? pal.textHi.withOpacity(0.4) : pal.line),
+            ),
+            child: Row(
+              children: [
+                Icon(active ? Icons.radio_button_checked : Icons.circle_outlined,
+                    size: 18, color: active ? pal.textHi : pal.textLo),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(a.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              color: pal.textHi,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 2),
+                      Text('${simMoney(eq, currency: a.currency)} · ${a.currency}',
+                          style: TextStyle(color: pal.textLo, fontSize: 12)),
+                    ],
+                  ),
+                ),
+                PopupMenuButton<String>(
+                  icon: Icon(Icons.more_horiz, color: pal.textLo),
+                  onSelected: (v) {
+                    if (v == 'rename') _renameDialog(a);
+                    if (v == 'delete') _deleteDialog(a);
+                  },
+                  itemBuilder: (_) => [
+                    const PopupMenuItem(value: 'rename', child: Text('Rename')),
+                    if (simState.profiles.length > 1)
+                      const PopupMenuItem(
+                          value: 'delete', child: Text('Delete')),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _createForm(NqePalette pal) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        TextField(
+          controller: _name,
+          textCapitalization: TextCapitalization.words,
+          decoration: const InputDecoration(
+              labelText: 'Profile name', isDense: true),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Text('Currency',
+                style: TextStyle(color: pal.textLo, fontSize: 13)),
+            const Spacer(),
+            for (final c in const ['PHP', 'USD', 'EUR'])
+              Padding(
+                padding: const EdgeInsets.only(left: 6),
+                child: InkWell(
+                  onTap: () => setState(() => _cur = c),
+                  borderRadius: BorderRadius.circular(16),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: c == _cur
+                          ? pal.textHi.withOpacity(0.12)
+                          : pal.surface2,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                          color: c == _cur
+                              ? pal.textHi.withOpacity(0.4)
+                              : pal.line),
+                    ),
+                    child: Text(c,
+                        style: TextStyle(
+                            color: c == _cur ? pal.textHi : pal.textLo,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700)),
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _cash,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: const InputDecoration(
+              labelText: 'Starting cash', isDense: true),
+        ),
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            TextButton(
+                onPressed: () => setState(() => _creating = false),
+                child: const Text('Cancel')),
+            const Spacer(),
+            FilledButton(
+                onPressed: _create, child: const Text('Create profile')),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Future<void> _renameDialog(SimAccount a) async {
+    final ctrl = TextEditingController(text: a.name);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('Rename profile'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Name'),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(c), child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(c, ctrl.text),
+              child: const Text('Save')),
+        ],
+      ),
+    );
+    if (name != null && name.trim().isNotEmpty) {
+      await simState.renameProfile(a.id, name);
+    }
+  }
+
+  Future<void> _deleteDialog(SimAccount a) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: Text('Delete "${a.name}"?'),
+        content: const Text(
+            'This permanently removes the profile and all its positions, '
+            'orders and trade history. This cannot be undone.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(c, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: NqeColors.loss),
+              onPressed: () => Navigator.pop(c, true),
+              child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (ok == true) await simState.deleteProfile(a.id);
   }
 }
 

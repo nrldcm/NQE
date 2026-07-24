@@ -138,6 +138,7 @@ class Cashflow {
 /// for that month. P&L / % change / TWR / drawdown are all derived, not stored.
 class PerfMonth {
   String id;
+  String accountId; // the book this monthly entry belongs to
   String title; // free label, e.g. "January 2024" or "July (2nd half)"
   String currency; // 'USD' | 'EUR' | 'PHP' — this row's book currency
   int sortKey; // ordering, e.g. yyyymm*100 + slot (lower = earlier)
@@ -150,6 +151,7 @@ class PerfMonth {
 
   PerfMonth({
     required this.id,
+    this.accountId = '',
     this.title = '',
     this.currency = 'USD',
     this.sortKey = 0,
@@ -166,6 +168,7 @@ class PerfMonth {
 
   Map<String, Object?> toMap() => {
         'id': id,
+        'account_id': accountId,
         'title': title,
         'currency': currency,
         'sort_key': sortKey,
@@ -179,6 +182,7 @@ class PerfMonth {
 
   factory PerfMonth.fromMap(Map<String, Object?> m) => PerfMonth(
         id: _s(m['id']),
+        accountId: _s(m['account_id']),
         title: _s(m['title']),
         currency: _s(m['currency'], 'USD'),
         sortKey: (m['sort_key'] as num?)?.toInt() ?? 0,

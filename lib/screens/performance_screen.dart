@@ -37,9 +37,12 @@ class _Row {
 }
 
 class PerformanceScreen extends StatefulWidget {
-  /// When true the screen is embedded as a tab body (no its own AppBar back
-  /// button styling changes needed — it still shows a title bar).
-  const PerformanceScreen({super.key});
+  /// The book this monthly performance belongs to, and its display name for
+  /// the title bar. Every entry is scoped to this account.
+  final String accountId;
+  final String accountName;
+  const PerformanceScreen(
+      {super.key, required this.accountId, this.accountName = ''});
 
   @override
   State<PerformanceScreen> createState() => _PerformanceScreenState();
@@ -47,6 +50,10 @@ class PerformanceScreen extends StatefulWidget {
 
 class _PerformanceScreenState extends State<PerformanceScreen> {
   int? _year; // selected year filter (null → default to latest)
+
+  /// This book's monthly rows in stored order.
+  List<PerfMonth> get _months =>
+      appState.perfMonths.where((m) => m.accountId == widget.accountId).toList();
 
   /// Compute every row's cumulative columns across the FULL ordered list (% is
   /// currency-independent, so the TWR compounding is valid regardless of the
@@ -56,7 +63,7 @@ class _PerformanceScreenState extends State<PerformanceScreen> {
     var periodFactor = 1.0;
     var periodPnl = 0.0;
     final out = <_Row>[];
-    for (final m in appState.perfMonths) {
+    for (final m in _months) {
       if (m.periodStart) {
         periodFactor = 1.0;
         periodPnl = 0.0;
@@ -72,7 +79,7 @@ class _PerformanceScreenState extends State<PerformanceScreen> {
   }
 
   List<int> _availableYears() {
-    final ys = appState.perfMonths.map((m) => m.sortKey ~/ 100).toSet();
+    final ys = _months.map((m) => m.sortKey ~/ 100).toSet();
     ys.add(DateTime.now().year);
     final list = ys.where((y) => y > 0).toList()..sort();
     return list;
@@ -84,7 +91,9 @@ class _PerformanceScreenState extends State<PerformanceScreen> {
     return Scaffold(
       backgroundColor: pal.bg,
       appBar: AppBar(
-        title: const Text('Monthly Performance'),
+        title: Text(widget.accountName.isEmpty
+            ? 'Monthly Performance'
+            : '${widget.accountName} · Performance'),
         actions: [
           IconButton(
             icon: const Icon(Icons.add),
@@ -495,15 +504,19 @@ class _PerformanceScreenState extends State<PerformanceScreen> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => _PerfEditor(
-          existing: existing, defaultYear: _year ?? DateTime.now().year),
+          existing: existing,
+          accountId: widget.accountId,
+          defaultYear: _year ?? DateTime.now().year),
     );
   }
 }
 
 class _PerfEditor extends StatefulWidget {
   final PerfMonth? existing;
+  final String accountId;
   final int defaultYear;
-  const _PerfEditor({this.existing, required this.defaultYear});
+  const _PerfEditor(
+      {this.existing, required this.accountId, required this.defaultYear});
 
   @override
   State<_PerfEditor> createState() => _PerfEditorState();
@@ -559,6 +572,7 @@ class _PerfEditorState extends State<_PerfEditor> {
     final e = widget.existing;
     final m = PerfMonth(
       id: e?.id ?? uid(),
+      accountId: widget.accountId,
       title: '${kMonths[_monthIdx]} $_year',
       currency: _cur,
       sortKey: _year * 100 + (_monthIdx + 1),

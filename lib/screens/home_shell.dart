@@ -1,12 +1,12 @@
 // Bottom-navigation shell hosting the four main sections.
 import 'package:flutter/material.dart';
 
+import '../sim/sim_state.dart';
 import '../sim/ui/sandbox_screen.dart';
 import '../theme.dart';
 import 'books_screen.dart';
 import 'dashboard_screen.dart';
 import 'live_screen.dart';
-import 'performance_screen.dart';
 import 'settings_screen.dart';
 
 class HomeShell extends StatefulWidget {
@@ -19,12 +19,20 @@ class HomeShell extends StatefulWidget {
 class _HomeShellState extends State<HomeShell> {
   int _index = 0;
 
+  @override
+  void initState() {
+    super.initState();
+    // Boot the sandbox engine at app start (idempotent) so the Home overview
+    // can roll the trading profiles' equity into the AUM total even before the
+    // Trade tab is ever opened.
+    simState.init();
+  }
+
   static const _tabs = [
     DashboardScreen(),
     BooksScreen(),
     LiveScreen(),
     SandboxScreen(),
-    PerformanceScreen(),
     SettingsScreen(),
   ];
 
@@ -62,8 +70,6 @@ class _HomeShellState extends State<HomeShell> {
             _dest(Icons.candlestick_chart_outlined, Icons.candlestick_chart,
                 'Live', pal),
             _dest(Icons.science_outlined, Icons.science, 'Trade', pal),
-            _dest(Icons.calendar_month_outlined, Icons.calendar_month,
-                'Performance', pal),
             _dest(Icons.settings_outlined, Icons.settings, 'Settings', pal),
           ],
         ),

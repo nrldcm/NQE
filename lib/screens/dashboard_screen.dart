@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../calc.dart';
 import '../format.dart';
 import '../models.dart';
+import '../sim/sim_state.dart';
 import '../sim/ui/sandbox_books.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
@@ -23,7 +24,9 @@ class DashboardScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: pal.bg,
       body: ListenableBuilder(
-        listenable: appState,
+        // Rebuild on ledger OR sandbox changes — the AUM total includes the
+        // combined equity of every sandbox trading profile.
+        listenable: Listenable.merge([appState, simState]),
         builder: (context, _) {
           return RefreshIndicator(
             onRefresh: () => appState.load(),
@@ -148,6 +151,10 @@ class _HeroCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final pal = context.nqe;
+    // AUM = the real fund books + the combined equity of every sandbox trading
+    // profile (converted to pesos).
+    final sandboxPhp = simState.totalEquityIn('PHP');
+    final totalAum = appState.totalAumPhp + sandboxPhp;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(22),
@@ -173,7 +180,7 @@ class _HeroCard extends StatelessWidget {
             fit: BoxFit.scaleDown,
             alignment: Alignment.centerLeft,
             child: Text(
-              money(appState.totalAumPhp, currency: 'PHP'),
+              money(totalAum, currency: 'PHP'),
               maxLines: 1,
               style: TextStyle(
                 color: pal.textHi,
@@ -183,6 +190,13 @@ class _HeroCard extends StatelessWidget {
               ),
             ),
           ),
+          if (sandboxPhp > 0) ...[
+            const SizedBox(height: 4),
+            Text(
+              'incl. ${money(sandboxPhp, currency: 'PHP')} sandbox',
+              style: TextStyle(color: pal.textLo, fontSize: 11.5),
+            ),
+          ],
           const SizedBox(height: 18),
           Row(
             children: [
