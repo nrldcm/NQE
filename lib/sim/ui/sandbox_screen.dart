@@ -313,9 +313,12 @@ class _SandboxScreenState extends State<SandboxScreen>
           ),
         ),
         VerticalDivider(width: 1, color: pal.line),
-        // Center — Overview (top section) + symbol bar + chart
+        // Center — Overview (top section) + symbol bar + chart. The overview
+        // strip and symbol bar sit at a fixed height at the top; the chart card
+        // takes ALL remaining vertical space so the chart (built-in or the
+        // TradingView embed) fills the panel 100% instead of being squished.
         Expanded(
-          child: SingleChildScrollView(
+          child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -324,10 +327,12 @@ class _SandboxScreenState extends State<SandboxScreen>
                 const SizedBox(height: 14),
                 _SymbolBar(symbol: _symbol, market: _market),
                 const SizedBox(height: 12),
-                SimCard(
-                  padding: const EdgeInsets.fromLTRB(10, 12, 12, 8),
-                  child: SandboxChartPane(
-                      symbol: _symbol, market: _market, height: 360),
+                Expanded(
+                  child: SimCard(
+                    padding: const EdgeInsets.fromLTRB(10, 12, 12, 8),
+                    child: SandboxChartPane(
+                        symbol: _symbol, market: _market, fill: true),
+                  ),
                 ),
               ],
             ),

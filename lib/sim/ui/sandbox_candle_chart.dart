@@ -94,11 +94,20 @@ class SandboxCandleChart extends StatefulWidget {
   final String symbol;
   final SimMarket market;
   final double height;
+
+  /// When true the chart ignores [height] and grows to fill the height its
+  /// parent gives it (the main price panel takes all the space left after the
+  /// toolbar, OHLC read-out and any indicator sub-panels). The parent MUST
+  /// impose a bounded height (e.g. an Expanded). Used by the desktop terminal
+  /// so the chart covers 100% of the panel.
+  final bool fill;
+
   const SandboxCandleChart({
     super.key,
     required this.symbol,
     required this.market,
     this.height = 260,
+    this.fill = false,
   });
 
   @override
@@ -124,6 +133,11 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
   // Cached plot geometry from the last build, so gestures can map screen
   // positions to price / fractional-x exactly like the painter does.
   double _lo = 0, _hi = 1, _plotW = 1;
+  // Effective main-panel height in logical px. Equals widget.height in fixed
+  // mode; in fill mode it's derived each build from the constraints (available
+  // height minus the indicator sub-panels + time axis). ALL price<->y maths
+  // (painter + gestures) read this, so they stay in lock-step.
+  double _mainH = 260;
   List<SimCandle> _lastCandles = const [];
 
   // ---- viewport (pan + zoom) ----------------------------------------------
@@ -262,17 +276,90 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
       atr: _ind.contains(_kAtr) ? atr(candles) : null,
       obv: _ind.contains(_kObv) ? obv(candles, volume) : null,
     );
-    // Reserve a bottom band for the time axis so its labels don't overlap the
-    // last sub-panel / the main panel's bottom candles.
-    final totalHeight = widget.height + _subCount * 68.0 + 18;
+    // Height taken by the indicator sub-panels + the bottom time-axis band,
+    // i.e. everything below the main price panel.
+    final subsPx = _subCount * 68.0 + 18;
+    // In fixed mode the price panel is widget.height; in fill mode _mainH is
+    // derived from the constraints inside the LayoutBuilder below.
+    if (!widget.fill) _mainH = widget.height;
 
     // Compute the main-panel price range ONCE here so the painter and the
     // drawing-tool gestures share an identical price<->y mapping (no drift).
     _computeRange(candles, data);
 
+    final chartBox = ValueListenableBuilder<SimOrderLine?>(
+      valueListenable: simOrderLine,
+      builder: (context, ol, _) {
+        // Only the price line for THIS symbol is drawn here.
+        final line = (ol != null && ol.symbol == widget.symbol) ? ol : null;
+        return LayoutBuilder(
+          builder: (context, c) {
+            final width = c.maxWidth;
+            _plotW = (width - 58.0).clamp(1.0, double.infinity);
+            // Fill mode: the box height comes from the parent; the main price
+            // panel gets whatever is left after the sub-panels + axis. Fixed
+            // mode: the classic widget.height price panel + sub-panels.
+            final totalH = widget.fill
+                ? (c.maxHeight.isFinite ? c.maxHeight : widget.height + subsPx)
+                : widget.height + subsPx;
+            if (widget.fill) {
+              _mainH = (totalH - subsPx).clamp(120.0, double.infinity);
+            }
+            final painter = CustomPaint(
+              size: Size(width, totalH),
+              painter: _CandlePainter(
+                candles: candles,
+                market: widget.market,
+                tf: _tf,
+                cross: _cross,
+                data: data,
+                mainHeight: _mainH,
+                lo: _lo,
+                hi: _hi,
+                winStart: _vStart,
+                winCount: _vCount,
+                up: NqeColors.gain,
+                down: NqeColors.loss,
+                grid: pal.line,
+                textColor: pal.textLo,
+                orderLine: line?.price,
+                orderUp: line?.isBuy ?? true,
+                shapes: _hidden ? const [] : _shapes,
+                preview: _hidden ? null : _preview,
+                selected: _hidden ? -1 : _selected,
+              ),
+            );
+            return Stack(
+              children: [
+                // Mouse-wheel / trackpad zoom (works in any tool mode),
+                // centred on the pointer. Pan + pinch live inside
+                // _buildGesture's cursor branch.
+                Listener(
+                  onPointerSignal: (e) {
+                    if (e is PointerScrollEvent) {
+                      _wheelZoom(e.localPosition.dx, e.scrollDelta.dy,
+                          candles.length);
+                    }
+                  },
+                  child: _buildGesture(painter, candles.length),
+                ),
+                Positioned(left: 0, top: 0, child: _drawingRail(context)),
+                if (_winCount != 0)
+                  Positioned(
+                    top: 2,
+                    right: _CandlePainter._rightAxis + 4,
+                    child: _resetZoomButton(context),
+                  ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
+      mainAxisSize: widget.fill ? MainAxisSize.max : MainAxisSize.min,
       children: [
         // Binance-style chart toolbar: a compact timeframe SELECT, the
         // Indicators tool, and (room for) more chart tools, all in one row.
@@ -288,69 +375,12 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
         const SizedBox(height: 6),
         _ohlcBar(context, shown),
         const SizedBox(height: 4),
-        SizedBox(
-          height: totalHeight,
-          child: ValueListenableBuilder<SimOrderLine?>(
-            valueListenable: simOrderLine,
-            builder: (context, ol, _) {
-              // Only the price line for THIS symbol is drawn here.
-              final line = (ol != null && ol.symbol == widget.symbol) ? ol : null;
-              return LayoutBuilder(
-                builder: (context, c) {
-                  final width = c.maxWidth;
-                  _plotW = (width - 58.0).clamp(1.0, double.infinity);
-                  final painter = CustomPaint(
-                    size: Size(width, totalHeight),
-                    painter: _CandlePainter(
-                      candles: candles,
-                      market: widget.market,
-                      tf: _tf,
-                      cross: _cross,
-                      data: data,
-                      mainHeight: widget.height,
-                      lo: _lo,
-                      hi: _hi,
-                      winStart: _vStart,
-                      winCount: _vCount,
-                      up: NqeColors.gain,
-                      down: NqeColors.loss,
-                      grid: pal.line,
-                      textColor: pal.textLo,
-                      orderLine: line?.price,
-                      orderUp: line?.isBuy ?? true,
-                      shapes: _hidden ? const [] : _shapes,
-                      preview: _hidden ? null : _preview,
-                      selected: _hidden ? -1 : _selected,
-                    ),
-                  );
-                  return Stack(
-                    children: [
-                      // Mouse-wheel / trackpad zoom (works in any tool mode),
-                      // centred on the pointer. Pan + pinch live inside
-                      // _buildGesture's cursor branch.
-                      Listener(
-                        onPointerSignal: (e) {
-                          if (e is PointerScrollEvent) {
-                            _wheelZoom(e.localPosition.dx, e.scrollDelta.dy,
-                                candles.length);
-                          }
-                        },
-                        child: _buildGesture(painter, candles.length),
-                      ),
-                      Positioned(left: 0, top: 0, child: _drawingRail(context)),
-                      if (_winCount != 0)
-                        Positioned(
-                          top: 2,
-                          right: _CandlePainter._rightAxis + 4,
-                          child: _resetZoomButton(context),
-                        ),
-                    ],
-                  );
-                },
-              );
-            },
-          ),
-        ),
+        // Fill mode expands into the space the parent gives; fixed mode keeps
+        // the classic height so scroll layouts (mobile) behave as before.
+        if (widget.fill)
+          Expanded(child: chartBox)
+        else
+          SizedBox(height: widget.height + subsPx, child: chartBox),
       ],
     );
   }
@@ -420,7 +450,7 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
   }
 
   double _priceFromY(double dy) {
-    final h = widget.height;
+    final h = _mainH;
     final f = (dy.clamp(0.0, h)) / h;
     return _hi - (_hi - _lo) * f;
   }
@@ -436,7 +466,7 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
   // Inverse mappings (data → screen), matching the painter, for hit-testing.
   double _yFromPrice(double p) {
     final span = (_hi - _lo).abs() < 1e-12 ? 1.0 : (_hi - _lo);
-    return widget.height * (_hi - p) / span;
+    return _mainH * (_hi - p) / span;
   }
 
   // fx (fraction of the FULL series) → screen x, through the current viewport.
@@ -610,7 +640,7 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
   // ---- create a shape ------------------------------------------------------
 
   void _onDrawTap(Offset p) {
-    if (_locked || p.dy > widget.height) return;
+    if (_locked || p.dy > _mainH) return;
     final d = _toData(p);
     switch (_tool) {
       case _DrawTool.hline:
@@ -625,7 +655,7 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
   }
 
   void _onDrawStart(Offset p) {
-    if (_locked || p.dy > widget.height) return;
+    if (_locked || p.dy > _mainH) return;
     final d = _toData(p);
     switch (_tool) {
       case _DrawTool.trend:

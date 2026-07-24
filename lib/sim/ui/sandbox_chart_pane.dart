@@ -24,11 +24,21 @@ class SandboxChartPane extends StatefulWidget {
   final String symbol;
   final SimMarket market;
   final double height;
+
+  /// When true the pane ignores [height] and expands to fill the height it is
+  /// given by its parent (used by the desktop terminal, where the chart should
+  /// occupy all remaining vertical space). Both the built-in chart and the
+  /// TradingView embed then fill the exact same box, so switching between them
+  /// never changes the footprint. The parent MUST give the pane a bounded
+  /// height (e.g. wrap it in an Expanded) when [fill] is true.
+  final bool fill;
+
   const SandboxChartPane({
     super.key,
     required this.symbol,
     required this.market,
     this.height = 300,
+    this.fill = false,
   });
 
   @override
@@ -55,22 +65,61 @@ class _SandboxChartPaneState extends State<SandboxChartPane> {
 
         if (!tradingViewSupported) {
           // No embed on this platform — only the built-in chart is possible.
+          if (widget.fill) {
+            return LayoutBuilder(
+              builder: (context, cc) => SandboxCandleChart(
+                symbol: widget.symbol,
+                market: widget.market,
+                height: cc.maxHeight.isFinite ? cc.maxHeight : widget.height,
+              ),
+            );
+          }
           return SandboxCandleChart(
               symbol: widget.symbol, market: widget.market, height: widget.height);
         }
 
         final showTv = view == _ChartView.tradingView;
+        final toggle = Align(
+          alignment: Alignment.centerRight,
+          child: _ChartViewToggle(
+            value: view,
+            onChanged: (v) => setState(() => _choice = v),
+          ),
+        );
+
+        // Fill mode: the chart expands to occupy every pixel below the toggle,
+        // and both views share that exact box (LayoutBuilder feeds the same
+        // height to whichever is shown). This is what makes TradingView cover
+        // 100% of the panel just like the built-in chart on desktop web.
+        if (widget.fill) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              toggle,
+              const SizedBox(height: 8),
+              Expanded(
+                child: LayoutBuilder(
+                  builder: (context, cc) {
+                    final h = cc.maxHeight.isFinite ? cc.maxHeight : widget.height;
+                    return showTv
+                        ? SandboxTradingViewChart(
+                            symbol: widget.symbol, height: h)
+                        : SandboxCandleChart(
+                            symbol: widget.symbol,
+                            market: widget.market,
+                            height: h);
+                  },
+                ),
+              ),
+            ],
+          );
+        }
+
         return Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Align(
-              alignment: Alignment.centerRight,
-              child: _ChartViewToggle(
-                value: view,
-                onChanged: (v) => setState(() => _choice = v),
-              ),
-            ),
+            toggle,
             const SizedBox(height: 8),
             if (showTv)
               // Give TradingView a tall footprint so it fills the chart area
