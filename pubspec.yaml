@@ -69,6 +69,23 @@ dev_dependencies:
 flutter:
   uses-material-design: true
 
+  # Bundled Flutter-web build, served by the phone's sync server so opening the
+  # phone's LAN URL in a browser loads the NQE web app. CI stages the output of
+  # `flutter build web` into assets/web/ before building the APK. Asset globbing
+  # is non-recursive per directory, so every subdir the web build emits must be
+  # listed explicitly (index.html lives at assets/web/, the rest under these).
+  # Directories that don't exist yet (before CI stages the build) only produce a
+  # non-fatal warning, so a plain local build still succeeds.
+  assets:
+    - assets/web/
+    - assets/web/assets/
+    - assets/web/assets/fonts/
+    - assets/web/assets/shaders/
+    - assets/web/assets/packages/cupertino_icons/assets/
+    - assets/web/canvaskit/
+    - assets/web/canvaskit/chromium/
+    - assets/web/icons/
+
 flutter_launcher_icons:
   android: true
   ios: false

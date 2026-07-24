@@ -73,6 +73,20 @@ jobs:
       - name: Generate launcher icons
         run: dart run flutter_launcher_icons
 
+      # Build the Flutter web app and stage it into assets/web/ so the phone's
+      # sync server can serve it (opening the phone's LAN URL in a browser loads
+      # NQE). Must run BEFORE `flutter build apk` so the APK bundles the assets.
+      - name: Build & stage web app
+        run: |
+          flutter config --enable-web
+          flutter create . --platforms=web --org com.willong --project-name nqe
+          dart run sqflite_common_ffi_web:setup
+          flutter build web --release --no-tree-shake-icons
+          rm -rf assets/web
+          mkdir -p assets/web
+          cp -r build/web/. assets/web/
+          ls -la assets/web
+
       # Version comes from pubspec (single source of truth) so the APK carries a
       # stable version, and pushes don't spawn a new versioned release each
       # time. Build number is monotonic.

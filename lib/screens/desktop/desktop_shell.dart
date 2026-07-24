@@ -4,6 +4,7 @@
 // on the (phone-mirrored) PIN lock before revealing the shell. The body reuses
 // the existing mobile screens verbatim so there is a single source of truth for
 // the presentation. Light/dark follows the shared themeController.
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import '../../services/auth_service.dart';
@@ -17,6 +18,7 @@ import '../../widgets/nqe_logo.dart';
 import '../books_screen.dart';
 import '../dashboard_screen.dart';
 import '../settings_screen.dart';
+import '../web_connect_screen.dart';
 import 'desktop_live.dart';
 import 'desktop_lock.dart';
 import 'pairing_screen.dart';
@@ -153,6 +155,11 @@ class _DesktopBootstrapState extends State<_DesktopBootstrap> {
     }
 
     if (!_paired) {
+      // The browser was served by the phone, so it already knows the address —
+      // it just needs the access code (no QR pairing on web).
+      if (kIsWeb) {
+        return WebConnectScreen(onConnected: _onPaired);
+      }
       return DesktopPairingScreen(onPaired: _onPaired);
     }
 

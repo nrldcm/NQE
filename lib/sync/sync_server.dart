@@ -26,6 +26,7 @@ import 'dart:math';
 
 import 'package:cryptography/cryptography.dart' show SecretKey;
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shelf/shelf.dart';
@@ -475,8 +476,63 @@ class SyncServer extends ChangeNotifier {
       if (path == 'pair/confirm' && request.method == 'POST') {
         return _pairConfirm(request);
       }
+      // Everything else: serve the bundled Flutter-web app so opening the
+      // phone's LAN URL in a browser loads NQE instead of a bare 404. Only GET
+      // is served statically; the special routes above keep their own methods.
+      if (request.method == 'GET') {
+        final asset = await _serveWebAsset(path);
+        if (asset != null) return asset;
+      }
       return Response.notFound('NQE server');
     };
+  }
+
+  /// Serve a file from the bundled Flutter-web build (see the `assets/web/`
+  /// entries in pubspec, staged by CI from `flutter build web`). The URL path
+  /// maps directly onto the asset key: root (`''`) → `assets/web/index.html`,
+  /// otherwise `assets/web/<path>`. Returns null when the asset isn't bundled
+  /// (rootBundle throws) so the caller falls back to the existing 404.
+  Future<Response?> _serveWebAsset(String path) async {
+    final rel = path.isEmpty ? 'index.html' : path;
+    final key = 'assets/web/$rel';
+    try {
+      final data = await rootBundle.load(key);
+      final bytes =
+          data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+      return Response.ok(bytes, headers: {'content-type': _webContentType(rel)});
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Best-effort content type for a bundled web asset, keyed off its extension.
+  String _webContentType(String path) {
+    final dot = path.lastIndexOf('.');
+    final ext = dot >= 0 ? path.substring(dot + 1).toLowerCase() : '';
+    switch (ext) {
+      case 'html':
+        return 'text/html; charset=utf-8';
+      case 'js':
+        return 'application/javascript';
+      case 'json':
+        return 'application/json';
+      case 'wasm':
+        return 'application/wasm';
+      case 'png':
+        return 'image/png';
+      case 'ico':
+        return 'image/x-icon';
+      case 'css':
+        return 'text/css';
+      case 'svg':
+        return 'image/svg+xml';
+      case 'ttf':
+        return 'font/ttf';
+      case 'otf':
+        return 'font/otf';
+      default:
+        return 'application/octet-stream';
+    }
   }
 
   void _handleConnection(WebSocketChannel channel) {

@@ -20,7 +20,6 @@ import '../widgets/connection_watcher.dart';
 import 'about_screen.dart';
 import 'desktop/pairing_screen.dart';
 import 'developer_screen.dart';
-import 'pair_desktop_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -238,13 +237,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
     if (res == null) return;
     await SyncServer.instance.setPreferredPort(res);
-    if (mounted) setState(() {});
-  }
-
-  Future<void> _openPairDesktop() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const PairDesktopScreen()),
-    );
     if (mounted) setState(() {});
   }
 
@@ -682,14 +674,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           if (running) ...[
             _divider(pal),
+            // Open the app in any browser on the same network — no install.
             ListTile(
-              leading: Icon(Icons.qr_code_scanner, color: pal.textHi),
-              title: Text('Pair Desktop Device',
+              leading: Icon(Icons.public, color: pal.textHi),
+              title: Text('Open in a browser',
                   style: TextStyle(color: pal.textHi)),
-              subtitle: Text('Scan the QR shown on your desktop app',
+              subtitle: Text('http://${s.host ?? '—'}:${s.port}',
                   style: TextStyle(color: pal.textLo, fontSize: 12)),
-              trailing: Icon(Icons.chevron_right, color: pal.textLo),
-              onTap: _openPairDesktop,
+              trailing: IconButton(
+                icon: Icon(Icons.copy, size: 18, color: pal.textLo),
+                tooltip: 'Copy URL',
+                onPressed: () {
+                  Clipboard.setData(
+                      ClipboardData(text: 'http://${s.host ?? ''}:${s.port}'));
+                  _snack('URL copied');
+                },
+              ),
+            ),
+            _divider(pal),
+            // Access code the browser must enter to connect (session secret).
+            ListTile(
+              leading: Icon(Icons.vpn_key_outlined, color: pal.textHi),
+              title: Text('Access code', style: TextStyle(color: pal.textHi)),
+              subtitle: Text(s.pairingKey.isEmpty ? '—' : s.pairingKey,
+                  style: TextStyle(color: pal.textLo, fontSize: 12),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis),
+              trailing: IconButton(
+                icon: Icon(Icons.copy, size: 18, color: pal.textLo),
+                tooltip: 'Copy code',
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(text: s.pairingKey));
+                  _snack('Access code copied');
+                },
+              ),
             ),
           ],
         ]);

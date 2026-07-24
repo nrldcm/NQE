@@ -7,12 +7,14 @@ build/
 # pubspec.lock IS committed (app, not package) for reproducible CI builds.
 
 # Platform folders are regenerated in CI via `flutter create .`
-android/
-ios/
-linux/
-macos/
-windows/
-web/
+# Anchored to the repo root so they don't also match the bundled web build
+# staged under assets/web/ (which must be trackable for local `flutter pub get`).
+/android/
+/ios/
+/linux/
+/macos/
+/windows/
+/web/
 
 # IDE / OS
 .idea/

@@ -114,13 +114,17 @@ class SyncClient extends ChangeNotifier {
     required List<String> hosts,
     required int port,
     required String key,
+    bool persist = true,
   }) async {
     _hosts = hosts.where((h) => h.trim().isNotEmpty).toList();
     _port = port;
     _key = key;
     lastUri = 'nqe://sync?host=${_hosts.isNotEmpty ? _hosts.first : ''}'
         '&hosts=${_hosts.join(',')}&port=$port&key=$key';
-    await _persistUri();
+    // The browser keeps the access code in memory ONLY (never localStorage), so
+    // the fund's sync credential can't be read back from the browser profile —
+    // the code is re-entered each session.
+    if (persist) await _persistUri();
     await connect();
   }
 
