@@ -204,6 +204,32 @@ void main() {
     expect(await row(phone, 'sim_watch', 'w1'), isNull);
   });
 
+  test('a second trading profile syncs to the peer as a new account', () async {
+    final phone = await freshDevice(); // authority
+    final desktop = await freshDevice();
+
+    // Both share the default profile; the desktop created a second one.
+    await (await phone.db)
+        .insert('sim_accounts', accountRow('acc1', 1000000, 100));
+    await (await desktop.db)
+        .insert('sim_accounts', accountRow('acc1', 1000000, 100));
+    await (await desktop.db).insert('sim_accounts', {
+      ...accountRow('acc2', 500000, 200),
+      'name': 'Profile B',
+    });
+
+    final fromDesktop = await SimSyncRepo.instance.buildAll(db: desktop);
+    await SimSyncRepo.instance
+        .applyRemote(fromDesktop, asFollower: false, db: phone);
+
+    // The brand-new profile is accepted by the authority; both survive.
+    expect(await row(phone, 'sim_accounts', 'acc1'), isNotNull);
+    final acc2 = await row(phone, 'sim_accounts', 'acc2');
+    expect(acc2, isNotNull);
+    expect(acc2!['cash'], 500000);
+    expect(acc2['name'], 'Profile B');
+  });
+
   test('follower applies an authority tombstone (closed position propagates)',
       () async {
     final phone = await freshDevice();
