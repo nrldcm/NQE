@@ -14,6 +14,7 @@ import 'sim/sim_db.dart';
 import 'sim/sim_state.dart';
 import 'screens/desktop/desktop_shell.dart';
 import 'screens/desktop_mode_gate.dart';
+import 'screens/dev_mode_gate.dart';
 import 'screens/lock_screen.dart';
 import 'screens/splash_screen.dart';
 import 'sync/sync_server.dart';
@@ -168,6 +169,9 @@ class _NqeAppState extends State<NqeApp> with WidgetsBindingObserver {
                 child ?? const SizedBox.shrink(),
                 if (SyncServer.instance.connectedPeers > 0)
                   const DesktopModeGate(),
+                // Anti-tamper: blocks (release only) while Android Developer
+                // options / USB debugging is enabled. Self-hides otherwise.
+                const DevModeGate(),
               ],
             ),
           ),

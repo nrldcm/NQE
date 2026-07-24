@@ -43,17 +43,22 @@ if ! grep -q 'android:allowBackup="false"' "$MANIFEST"; then
   fi
 fi
 
-echo "==> MainActivity: FlutterFragmentActivity + FLAG_SECURE"
+echo "==> MainActivity: FlutterFragmentActivity + FLAG_SECURE + security channel"
 MA="$(find "$APP/src/main" -name 'MainActivity.kt' | head -n1 || true)"
 if [ -n "${MA:-}" ]; then
   cat > "$MA" <<KOT
 package $PKG
 
 import android.os.Bundle
+import android.provider.Settings
 import android.view.WindowManager
 import io.flutter.embedding.android.FlutterFragmentActivity
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterFragmentActivity() {
+    private val securityChannel = "com.willong.nqe/security"
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Block screenshots and hide app content in the recents/app-switcher.
@@ -61,6 +66,33 @@ class MainActivity : FlutterFragmentActivity() {
             WindowManager.LayoutParams.FLAG_SECURE,
             WindowManager.LayoutParams.FLAG_SECURE
         )
+    }
+
+    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+        super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, securityChannel)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "devOptionsEnabled" -> result.success(isDevOptionsEnabled())
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    // True when Developer options or USB debugging is switched on.
+    private fun isDevOptionsEnabled(): Boolean {
+        return try {
+            val dev = Settings.Global.getInt(
+                contentResolver,
+                Settings.Global.DEVELOPMENT_SETTINGS_ENABLED, 0
+            )
+            val adb = Settings.Global.getInt(
+                contentResolver, Settings.Global.ADB_ENABLED, 0
+            )
+            dev == 1 || adb == 1
+        } catch (e: Exception) {
+            false
+        }
     }
 }
 KOT
