@@ -4,6 +4,7 @@
 // inception), a "time period" cumulative that resets at a marked month, and
 // drawdown. A year selector filters the table to one year; a comparison strip
 // summarises each year. Data syncs with the phone like the rest of the ledger.
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -121,7 +122,7 @@ class _PerformanceScreenState extends State<PerformanceScreen> {
                           ),
                         ),
                       )
-                    : _table(pal, rows),
+                    : _list(pal, rows),
               ),
             ],
           );
@@ -136,14 +137,21 @@ class _PerformanceScreenState extends State<PerformanceScreen> {
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
       child: SizedBox(
         height: 34,
-        child: ListView(
-          scrollDirection: Axis.horizontal,
-          children: [
-            for (final y in years) ...[
-              _yearChip(pal, y, y == sel),
-              const SizedBox(width: 8),
+        child: ScrollConfiguration(
+          behavior: ScrollConfiguration.of(context).copyWith(dragDevices: {
+            PointerDeviceKind.touch,
+            PointerDeviceKind.mouse,
+            PointerDeviceKind.trackpad,
+          }),
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            children: [
+              for (final y in years) ...[
+                _yearChip(pal, y, y == sel),
+                const SizedBox(width: 8),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
@@ -294,18 +302,10 @@ class _PerformanceScreenState extends State<PerformanceScreen> {
                 TextStyle(color: fg, fontSize: 10.5, fontWeight: FontWeight.w800)),
       );
 
-  // ---- the month table ------------------------------------------------------
-  static const _wMonth = 128.0;
-  static const _wBal = 116.0;
-  static const _wPnl = 112.0;
-  static const _wPct = 64.0;
-  static const _wTwr = 84.0;
-  static const _wPPnl = 116.0;
-  static const _wPTwr = 92.0;
-  static const _wWire = 116.0;
-  static const _wDd = 58.0;
-
-  Widget _table(NqePalette pal, List<_Row> rows) {
+  // ---- the month cards ------------------------------------------------------
+  // Each month is a self-contained card that shows every column stacked, so the
+  // whole record is readable at a glance without a horizontal table swipe.
+  Widget _list(NqePalette pal, List<_Row> rows) {
     // Totals per currency for the displayed year.
     final pnlByCur = <String, double>{};
     final wireByCur = <String, double>{};
@@ -313,128 +313,181 @@ class _PerformanceScreenState extends State<PerformanceScreen> {
       pnlByCur[r.m.currency] = (pnlByCur[r.m.currency] ?? 0) + r.m.pnl;
       wireByCur[r.m.currency] = (wireByCur[r.m.currency] ?? 0) + r.m.wireOut;
     }
-    return SingleChildScrollView(
-      scrollDirection: Axis.vertical,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _headerRow(pal),
-            for (final r in rows)
-              InkWell(
-                onTap: () => _edit(context, r.m),
-                child: _dataRow(pal, r),
-              ),
-            for (final c in pnlByCur.keys)
-              _totalsRow(pal, c, pnlByCur[c]!, wireByCur[c] ?? 0),
-          ],
-        ),
-      ),
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 32),
+      children: [
+        for (final r in rows) _monthCard(pal, r),
+        const SizedBox(height: 2),
+        for (final c in pnlByCur.keys)
+          _totalCard(pal, c, pnlByCur[c]!, wireByCur[c] ?? 0),
+      ],
     );
   }
 
-  Widget _cell(double w, Widget child,
-          {Color? bg, Alignment align = Alignment.centerRight}) =>
-      Container(
-        width: w,
-        height: 40,
-        alignment: align,
-        padding: const EdgeInsets.symmetric(horizontal: 8),
-        decoration: BoxDecoration(color: bg),
-        child: child,
-      );
-
-  Widget _txt(String s, Color c, {FontWeight w = FontWeight.w600}) => Text(s,
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-      style: TextStyle(color: c, fontSize: 12.5, fontWeight: w));
-
-  Widget _headerRow(NqePalette pal) {
-    Widget h(double w, String s, {Alignment a = Alignment.centerRight}) =>
-        _cell(w, _txt(s, pal.textLo, w: FontWeight.w700), align: a);
-    return Container(
-      decoration: BoxDecoration(
-        color: pal.surface,
-        border: Border(bottom: BorderSide(color: pal.line)),
-      ),
-      child: Row(children: [
-        h(_wMonth, 'Month', a: Alignment.centerLeft),
-        h(_wBal, 'Start'),
-        h(_wBal, 'End'),
-        h(_wPnl, 'P&L'),
-        h(_wPct, '% chg'),
-        h(_wTwr, 'TWR'),
-        h(_wPPnl, 'Period P&L'),
-        h(_wPTwr, 'Period TWR'),
-        h(_wWire, 'Wire out'),
-        h(_wDd, 'DD'),
-      ]),
-    );
-  }
-
-  Widget _dataRow(NqePalette pal, _Row r) {
+  Widget _monthCard(NqePalette pal, _Row r) {
     final m = r.m;
     final cur = m.currency;
-    final pnlC = m.pnl >= 0 ? NqeColors.gain : NqeColors.loss;
+    final pnlC = NqeColors.pnl(m.pnl);
+    final chgC = NqeColors.pnl(m.pctChange);
     final wire = m.wireOut;
-    final wireBg = wire == 0
-        ? null
-        : (wire > 0
-            ? const Color(0xFFFFE24D).withOpacity(0.30)
-            : NqeColors.gain.withOpacity(0.20));
     final ddPct = m.endBal == 0 ? 0.0 : -(wire) / m.endBal * 100;
-    return Container(
-      decoration: BoxDecoration(
-        color: m.periodStart ? pal.textHi.withOpacity(0.04) : null,
-        border: Border(
-          bottom: BorderSide(color: pal.line.withOpacity(0.5)),
-          left: m.periodStart
-              ? BorderSide(color: pal.textHi.withOpacity(0.5), width: 2)
-              : BorderSide.none,
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Material(
+        color: pal.surface,
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () => _edit(context, m),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                  color: m.periodStart
+                      ? pal.textHi.withOpacity(0.35)
+                      : pal.line),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [
+                  Flexible(
+                    child: Text(m.title.isEmpty ? '—' : m.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            color: pal.textHi,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w800)),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                    decoration: BoxDecoration(
+                        color: pal.surface2,
+                        borderRadius: BorderRadius.circular(6)),
+                    child: Text(currencySymbol(cur),
+                        style: TextStyle(
+                            color: pal.textLo,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800)),
+                  ),
+                  const Spacer(),
+                  _pillBox(
+                      chgC.withOpacity(0.16),
+                      '${m.pctChange >= 0 ? '▲' : '▼'} ${_pct(m.pctChange.abs())}',
+                      chgC),
+                ]),
+                if (m.periodStart) ...[
+                  const SizedBox(height: 8),
+                  Row(children: [
+                    Icon(Icons.flag_outlined,
+                        size: 13, color: pal.textHi.withOpacity(0.7)),
+                    const SizedBox(width: 4),
+                    Text('New time period',
+                        style: TextStyle(
+                            color: pal.textHi.withOpacity(0.7),
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w600)),
+                  ]),
+                ],
+                const SizedBox(height: 14),
+                _statRow([
+                  _stat(pal, 'Start', _money(m.startBal, cur), pal.textHi),
+                  _stat(pal, 'End', _money(m.endBal, cur), pal.textHi),
+                ]),
+                const SizedBox(height: 14),
+                _statRow([
+                  _stat(pal, 'P&L', _money(m.pnl, cur), pnlC),
+                  _stat(pal, 'TWR · inception', _pct(r.twrPct),
+                      NqeColors.pnl(r.twrPct)),
+                ]),
+                const SizedBox(height: 14),
+                _statRow([
+                  _stat(pal, 'Period P&L', _money(r.periodPnl, cur),
+                      NqeColors.pnl(r.periodPnl)),
+                  _stat(pal, 'Period TWR', _pct(r.periodTwrPct),
+                      NqeColors.pnl(r.periodTwrPct)),
+                ]),
+                const SizedBox(height: 14),
+                _statRow([
+                  _stat(pal, 'Wire out',
+                      wire == 0 ? '—' : _money(wire, cur),
+                      wire == 0 ? pal.textLo : pal.textHi),
+                  _stat(pal, 'Drawdown', wire == 0 ? '—' : _pct(ddPct),
+                      pal.textLo),
+                ]),
+              ],
+            ),
+          ),
         ),
       ),
-      child: Row(children: [
-        _cell(_wMonth, _txt(m.title.isEmpty ? '—' : m.title, pal.textHi),
-            align: Alignment.centerLeft),
-        _cell(_wBal, _txt(_money(m.startBal, cur), pal.textHi)),
-        _cell(_wBal, _txt(_money(m.endBal, cur), pal.textHi)),
-        _cell(_wPnl, _txt(_money(m.pnl, cur), pnlC, w: FontWeight.w700)),
-        _cell(_wPct, _txt(_pct(m.pctChange), pnlC)),
-        _cell(_wTwr, _txt(_pct(r.twrPct), pal.textLo)),
-        _cell(_wPPnl,
-            _txt(_money(r.periodPnl, cur), NqeColors.pnl(r.periodPnl))),
-        _cell(_wPTwr, _txt(_pct(r.periodTwrPct), pal.textLo)),
-        _cell(_wWire, _txt(wire == 0 ? '—' : _money(wire, cur), pal.textHi),
-            bg: wireBg),
-        _cell(_wDd, _txt(wire == 0 ? '—' : _pct(ddPct), pal.textLo)),
-      ]),
     );
   }
 
-  Widget _totalsRow(NqePalette pal, String cur, double pnl, double wire) {
-    return Container(
-      decoration: BoxDecoration(
-        color: pal.surface,
-        border: Border(top: BorderSide(color: pal.line, width: 1.5)),
-      ),
-      child: Row(children: [
-        _cell(_wMonth, _txt('Total ($cur)', pal.textHi, w: FontWeight.w800),
-            align: Alignment.centerLeft),
-        _cell(_wBal, const SizedBox()),
-        _cell(_wBal, const SizedBox()),
-        _cell(_wPnl,
-            _txt(_money(pnl, cur), NqeColors.pnl(pnl), w: FontWeight.w800)),
-        _cell(_wPct, const SizedBox()),
-        _cell(_wTwr, const SizedBox()),
-        _cell(_wPPnl, const SizedBox()),
-        _cell(_wPTwr, const SizedBox()),
-        _cell(_wWire, _txt(_money(wire, cur), pal.textHi, w: FontWeight.w800)),
-        _cell(_wDd, const SizedBox()),
-      ]),
-    );
-  }
+  Widget _statRow(List<Widget> cells) => Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [for (final c in cells) Expanded(child: c)],
+      );
+
+  Widget _stat(NqePalette pal, String label, String value, Color valueColor) =>
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  color: pal.textLo,
+                  fontSize: 11,
+                  letterSpacing: 0.2,
+                  fontWeight: FontWeight.w600)),
+          const SizedBox(height: 3),
+          Text(value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  color: valueColor,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700)),
+        ],
+      );
+
+  Widget _totalCard(NqePalette pal, String cur, double pnl, double wire) =>
+      Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+          decoration: BoxDecoration(
+            color: pal.surface2,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: pal.line),
+          ),
+          child: Row(children: [
+            Text('Total ($cur)',
+                style: TextStyle(
+                    color: pal.textHi,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800)),
+            const Spacer(),
+            Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+              Text(_money(pnl, cur),
+                  style: TextStyle(
+                      color: NqeColors.pnl(pnl),
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800)),
+              const SizedBox(height: 2),
+              Text('Wire ${_money(wire, cur)}',
+                  style: TextStyle(
+                      color: pal.textLo,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600)),
+            ]),
+          ]),
+        ),
+      );
 
   Future<void> _edit(BuildContext context, PerfMonth? existing) async {
     await showModalBottomSheet(

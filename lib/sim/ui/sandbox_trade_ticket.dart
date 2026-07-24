@@ -524,9 +524,11 @@ class _SandboxTradeTicketState extends State<SandboxTradeTicket> {
       child: Row(
         children: [
           Text(k, style: TextStyle(color: pal.textLo, fontSize: 12)),
-          const Spacer(),
-          const SizedBox(width: 8),
-          Flexible(
+          const SizedBox(width: 12),
+          // Expanded (not Spacer + Flexible) so the value box always fills the
+          // remaining width and its right edge lands at the row's edge — every
+          // row lines up regardless of label length.
+          Expanded(
             child: Text(v,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
