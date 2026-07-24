@@ -108,9 +108,17 @@ class _PerformanceScreenState extends State<PerformanceScreen> {
         listenable: appState,
         builder: (context, _) {
           final years = _availableYears();
+          // Default to the latest year that actually HAS rows (not just the
+          // current calendar year) so a book whose data is only in prior years
+          // doesn't open on an empty "No <thisYear> months" view.
+          final dataYears =
+              _months.map((m) => m.sortKey ~/ 100).where((y) => y > 0).toList();
+          final defaultYear = dataYears.isEmpty
+              ? DateTime.now().year
+              : dataYears.reduce((a, b) => a > b ? a : b);
           final year = (_year != null && years.contains(_year))
               ? _year!
-              : years.last;
+              : defaultYear;
           final all = _allRows();
           final rows =
               all.where((r) => r.m.sortKey ~/ 100 == year).toList();
@@ -587,6 +595,7 @@ class _PerfEditorState extends State<_PerfEditor> {
       endBal: _num(_end),
       wireOut: _num(_wire),
       periodStart: _periodStart,
+      note: e?.note ?? '',
       createdAt: e?.createdAt ?? nowIso(),
     );
     await appState.savePerfMonth(m);

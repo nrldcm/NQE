@@ -149,10 +149,13 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
   }
 
   Future<void> _loadShapes() async {
+    final key = _drawKey; // capture before the await (symbol may switch)
     try {
       final prefs = await SharedPreferences.getInstance();
-      final raw = prefs.getString(_drawKey);
-      if (!mounted) return;
+      // Bail if the symbol changed while we were awaiting — else we'd paint the
+      // old symbol's drawings onto the new one.
+      if (!mounted || key != _drawKey) return;
+      final raw = prefs.getString(key);
       final loaded = <_Shape>[];
       if (raw != null && raw.isNotEmpty) {
         for (final e in (jsonDecode(raw) as List)) {
@@ -169,13 +172,17 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
   }
 
   Future<void> _saveShapes() async {
+    // Snapshot the key + payload BEFORE the async gap, so a symbol switch can't
+    // write this symbol's shapes under the next symbol's key.
+    final key = _drawKey;
+    final payload =
+        _shapes.isEmpty ? null : jsonEncode([for (final s in _shapes) s.toJson()]);
     try {
       final prefs = await SharedPreferences.getInstance();
-      if (_shapes.isEmpty) {
-        await prefs.remove(_drawKey);
+      if (payload == null) {
+        await prefs.remove(key);
       } else {
-        await prefs.setString(
-            _drawKey, jsonEncode([for (final s in _shapes) s.toJson()]));
+        await prefs.setString(key, payload);
       }
     } catch (_) {/* best-effort */}
   }

@@ -4,11 +4,13 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
-import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:windows_single_instance/windows_single_instance.dart';
 
 import 'db/database.dart';
+// Web-only sqflite factory, behind a conditional import so the browser package
+// never enters the mobile/desktop AOT build (it would break the Android APK).
+import 'db/web_db_stub.dart' if (dart.library.html) 'db/web_db.dart' as webdb;
 import 'services/auth_service.dart';
 import 'services/error_log.dart';
 import 'sim/sim_db.dart';
@@ -32,7 +34,7 @@ Future<void> main(List<String> args) async {
   // instance / Platform here: those are dart:io/native and would crash the web
   // boot. Biometric is intentionally excluded on web (PIN only).
   if (kIsWeb) {
-    databaseFactory = databaseFactoryFfiWeb;
+    webdb.configureWebDatabaseFactory();
     LedgerDb.ephemeral = true;
     SimDb.ephemeral = true;
     await themeController.load();

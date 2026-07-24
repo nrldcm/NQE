@@ -163,8 +163,12 @@ class PerfMonth {
     required this.createdAt,
   });
 
-  double get pnl => endBal - startBal;
-  double get pctChange => startBal == 0 ? 0 : (endBal - startBal) / startBal * 100;
+  // Trading P&L / return EXCLUDE wire flows (a true time-weighted return): a
+  // withdrawal (+wireOut) is added back and a deposit (−wireOut) subtracted, so
+  // money moved in/out is never counted as trading gain or loss.
+  double get pnl => endBal - startBal + wireOut;
+  double get pctChange =>
+      startBal == 0 ? 0 : (endBal - startBal + wireOut) / startBal * 100;
 
   Map<String, Object?> toMap() => {
         'id': id,

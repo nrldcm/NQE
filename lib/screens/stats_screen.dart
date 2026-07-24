@@ -325,6 +325,12 @@ class _SandboxStatsBodyState extends State<_SandboxStatsBody> {
 
   @override
   Widget build(BuildContext context) {
+    // For the ACTIVE profile use the live in-memory blotter, so newly-filled
+    // trades and equity refresh immediately (the outer ListenableBuilder
+    // rebuilds on every sim tick). Other profiles use the one-time query.
+    if (widget.profileId == simState.activeId) {
+      return _body(context, simState.trades);
+    }
     return FutureBuilder<List<SimTrade>>(
       future: _future,
       builder: (context, snap) {

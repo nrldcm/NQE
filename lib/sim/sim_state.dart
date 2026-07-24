@@ -513,6 +513,10 @@ class SimState extends ChangeNotifier {
       await _forwardIntent('delete', 0, accId: id);
       return true;
     }
+    // Drop it from the in-memory maps SYNCHRONOUSLY so a price tick landing in
+    // the await gap below can't re-persist (resurrect) the deleted account.
+    _portfolios.remove(id);
+    _accounts.removeWhere((a) => a.id == id);
     await _serial(() => _db.deleteAccount(id));
     if (_activeId == id) _activeId = null;
     await _serial(_reloadFromDb);
@@ -705,6 +709,10 @@ class SimState extends ChangeNotifier {
   // ---- persistence + notifications ----------------------------------------
 
   Future<void> _persist(SimEffect e, SimPortfolio pf) async {
+    // Skip if this portfolio is no longer the live one for its account — it was
+    // deleted or reset out from under this queued persist, so writing it would
+    // resurrect just-removed rows.
+    if (!identical(_portfolios[pf.account.id], pf)) return;
     await _db.upsertAccount(pf.account);
     for (final t in e.trades) {
       await _db.insertTrade(t);
