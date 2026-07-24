@@ -4,11 +4,14 @@
 // sync_server.dart). The desktop connects to it as a client, mirroring that
 // server's frame/auth protocol exactly:
 //   1. Open a WebSocketChannel to ws://host:port/sync.
-//   2. Send the pairing key verbatim as the FIRST frame to authenticate.
-//   3. Push our full snapshot: encryptSecret(encodePayload(buildAll())).
-//   4. For every incoming (encrypted) frame: decryptSecret -> decodePayload ->
-//      SyncRepo.applyRemote, refresh appState, then reply with our latest
-//      snapshot so the two sides converge.
+//   2. Derive the session AEAD key (HKDF over the paired secret) and send our
+//      full snapshot sealed under it as the FIRST frame. Decrypting it is how
+//      the phone authenticates us — no cleartext key ever crosses the wire.
+//   3. Frames are sealFrame(counter, encodePayload(buildAll())) under the
+//      session key; the counter gives replay protection.
+//   4. For every incoming frame: openFrame -> reject stale/replayed counters ->
+//      decodePayload -> SyncRepo.applyRemote, refresh appState, then reply with
+//      our latest snapshot so the two sides converge.
 //   5. A periodic timer re-sends our snapshot every few seconds. The merge is
 //      idempotent/commutative (see sync_engine.dart), so repeated sends only
 //      guarantee convergence and never corrupt data or drop edits.
@@ -19,6 +22,7 @@
 // can auto-reconnect on the next launch.
 import 'dart:async';
 
+import 'package:cryptography/cryptography.dart' show SecretKey;
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -70,6 +74,16 @@ class SyncClient extends ChangeNotifier {
   bool _appStateBound = false;
   bool _manuallyClosed = false;
   bool _authed = false;
+
+  /// Session AEAD key derived (HKDF) from the paired secret [_key]. Every frame
+  /// is sealed/opened under it — the app-embedded static secret is never used.
+  SecretKey? _sessionKey;
+
+  /// Monotonic counter stamped into frames we send (peer's replay check).
+  int _sendCounter = 0;
+
+  /// Last frame counter we accepted this connection (our replay guard).
+  int _recvCounter = 0;
 
   /// True once the FIRST snapshot from the phone has been applied this
   /// connection — the desktop shell waits for this before revealing the
@@ -216,6 +230,9 @@ class SyncClient extends ChangeNotifier {
       return;
     }
 
+    // Derive the session key from the paired secret once per connect attempt.
+    _sessionKey = await CryptoService.instance.deriveSessionKey(_key!);
+
     _teardownSocket();
 
     // Hybrid connect: try each candidate address in priority order — LAN Wi-Fi
@@ -242,14 +259,17 @@ class SyncClient extends ChangeNotifier {
           cancelOnError: true,
         );
 
-        // First frame authenticates: the pairing key, verbatim.
-        channel.sink.add(_key);
+        // The first frame authenticates implicitly: it is our snapshot sealed
+        // under the session key, which only a holder of the paired secret can
+        // produce. No cleartext key is ever sent.
         _authed = true;
         attempt = 0;
         activeHost = host;
+        _recvCounter = 0;
+        _sendCounter = 0;
         _set(SyncConn.connected, 'Connected to $host:$_port.');
 
-        await _pushSnapshot();
+        await _pushSnapshot(force: true);
         _startPushTimer();
         return; // connected — stop trying candidates
       } catch (_) {
@@ -265,8 +285,15 @@ class SyncClient extends ChangeNotifier {
   void _onFrame(dynamic message) async {
     try {
       final frame = message is String ? message : message.toString();
-      final json = await CryptoService.instance.decryptSecret(frame);
-      final records = SyncEngine.decodePayload(json);
+      final key = _sessionKey;
+      if (key == null) return;
+      // Open + authenticate under the session key (throws on a forged/corrupt
+      // frame → logged below, link preserved).
+      final decoded = await CryptoService.instance.openFrame(key, frame);
+      // Replay protection: ignore a frame whose counter does not advance.
+      if (CryptoService.isReplay(decoded.counter, _recvCounter)) return;
+      _recvCounter = decoded.counter;
+      final records = SyncEngine.decodePayload(decoded.payload);
       // The desktop is a pure mirror — apply the phone's ledger rows verbatim
       // so a clock-skew LWW can never drop or resurrect a row here.
       await SyncRepo.instance.applyRemote(records, asFollower: true);
@@ -298,7 +325,8 @@ class SyncClient extends ChangeNotifier {
   /// not echo forever.
   Future<void> _pushSnapshot({bool force = false}) async {
     final channel = _channel;
-    if (channel == null || !_authed) return;
+    final key = _sessionKey;
+    if (channel == null || !_authed || key == null) return;
     try {
       final records = await SyncRepo.instance.buildAll();
       records.addAll(await SimSyncRepo.instance.buildAll());
@@ -306,8 +334,10 @@ class SyncClient extends ChangeNotifier {
       final hash = json.hashCode;
       if (!force && hash == _lastSentHash) return;
       _lastSentHash = hash;
-      final encrypted = await CryptoService.instance.encryptSecret(json);
-      channel.sink.add(encrypted);
+      _sendCounter += 1;
+      final frame = await CryptoService.instance
+          .sealFrame(key, counter: _sendCounter, payload: json);
+      channel.sink.add(frame);
     } catch (e) {
       statusMessage = 'Failed to send snapshot: $e';
       notifyListeners();

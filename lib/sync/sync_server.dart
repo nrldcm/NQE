@@ -2,15 +2,18 @@
 //
 // The phone is the source of truth: it runs a WebSocket server on the local
 // Wi-Fi network and the desktop app connects to it as a client. Pairing is done
-// out-of-band via a QR code encoding [pairingUri]; the desktop must present the
-// [pairingKey] as its first frame to authenticate. After that both sides
-// exchange one encrypted payload each and merge deterministically via
-// [SyncEngine] / [SyncRepo].
+// out-of-band via a QR code encoding [pairingUri]; the [pairingKey] it carries
+// is provisioned over the SAS-authenticated QR handshake and both devices
+// persist it. After that both sides exchange encrypted payloads and merge
+// deterministically via [SyncEngine] / [SyncRepo].
 //
 // Design notes:
-//   * Transport frames are the JSON payload string, encrypted with
-//     CryptoService.encryptSecret/decryptSecret (authenticated AES-GCM) so no
-//     ledger data crosses the LAN in the clear.
+//   * Session security: EVERY transport frame is sealed with AES-256-GCM under
+//     a key derived (HKDF-SHA256) from the paired secret — NOT the app-embedded
+//     static secret. Authentication is implicit: the first frame must decrypt
+//     and verify under that key to prove the peer holds the paired secret, so
+//     there is no cleartext key on the wire. Each frame carries a monotonic
+//     counter (replay protection) and only ONE peer may be connected at a time.
 //   * The server is deliberately defensive: bind and every connection are
 //     wrapped in try/catch, and any failure flips [status] to
 //     [SyncStatus.error] rather than throwing into the UI.
@@ -70,10 +73,21 @@ class SyncServer extends ChangeNotifier {
   String? lastError;
 
   String _pairingKey = '';
+
+  /// AES-256-GCM key for the live sync session, derived from [_pairingKey] via
+  /// HKDF. Set on [start]; every sync frame is sealed/opened under it.
+  SecretKey? _sessionKey;
+
+  /// Monotonic counter stamped into every frame we send, for the peer's replay
+  /// check. Strictly increasing across the server's lifetime.
+  int _sendCounter = 0;
+
   HttpServer? _server;
 
-  /// Currently authenticated peer sockets. Used both to count connected peers
-  /// and to fan out the periodic auto-sync push below.
+  /// Currently authenticated peer sockets. Hard-capped to a SINGLE peer (a new
+  /// authenticated connection replaces any existing one) so a sniffed session
+  /// can't be joined by an extra forged peer. Also used to fan out the periodic
+  /// auto-sync push below.
   final Set<WebSocketChannel> _peers = {};
 
   /// Periodic full-state push. Runs only while at least one peer is connected;
@@ -191,6 +205,9 @@ class SyncServer extends ChangeNotifier {
       await _loadPreferredPort();
       host = await _resolveWifiIp();
       _pairingKey = _generateKey();
+      // Derive the session AEAD key from the paired secret (never _appSecret).
+      _sessionKey = await CryptoService.instance.deriveSessionKey(_pairingKey);
+      _sendCounter = 0;
 
       final handler = _buildHandler();
       // Auto-scan for an open port starting at the preferred one, so a busy or
@@ -235,6 +252,8 @@ class SyncServer extends ChangeNotifier {
     _stopPushTimer();
     _unbindAppState();
     _peers.clear();
+    _sessionKey = null;
+    _sendCounter = 0;
     connectedPeers = 0;
     peer = PeerState.idle;
     status = SyncStatus.stopped;
@@ -465,6 +484,8 @@ class SyncServer extends ChangeNotifier {
     notifyListeners();
 
     var authed = false;
+    // Per-connection replay guard: the last accepted frame counter.
+    var recvCounter = 0;
     StreamSubscription? sub;
 
     void teardown() {
@@ -485,14 +506,47 @@ class SyncServer extends ChangeNotifier {
         (dynamic message) async {
           try {
             final frame = message is String ? message : message.toString();
+            final key = _sessionKey;
+            if (key == null) {
+              await _closeQuietly(channel, 4001, 'unavailable');
+              return;
+            }
 
-            if (!authed) {
-              // First frame must be the pairing key, verbatim.
-              if (frame != _pairingKey) {
+            // Every frame (including the first) must decrypt + authenticate
+            // under the paired session key. A GCM/format failure ⇒ the peer
+            // does not hold the paired secret ⇒ close 4001.
+            SyncFrame decoded;
+            try {
+              decoded = await CryptoService.instance.openFrame(key, frame);
+            } catch (_) {
+              await _closeQuietly(channel, 4001, 'unauthorized');
+              if (!authed) {
+                peer = PeerState.disconnected;
+                notifyListeners();
+              }
+              return;
+            }
+
+            // Replay protection: reject a frame whose counter does not strictly
+            // advance. An unauthenticated first frame that fails this is treated
+            // as a rejected auth attempt (close); an authed peer just drops it.
+            if (CryptoService.isReplay(decoded.counter, recvCounter)) {
+              if (!authed) {
                 await _closeQuietly(channel, 4001, 'unauthorized');
                 peer = PeerState.disconnected;
                 notifyListeners();
-                return;
+              }
+              return;
+            }
+            recvCounter = decoded.counter;
+
+            final firstFrame = !authed;
+            if (firstFrame) {
+              // Single-peer cap: a newly authenticated peer replaces any
+              // existing one so at most one connection is ever live.
+              for (final old in _peers.toList()) {
+                _peers.remove(old);
+                await _closeQuietly(old, 4002, 'replaced by a newer peer');
               }
               authed = true;
               _peers.add(channel);
@@ -501,12 +555,14 @@ class SyncServer extends ChangeNotifier {
               notifyListeners();
               // Kick off continuous auto-sync now that a peer is connected.
               _startPushTimer();
-              await _sendLocalPayload(channel);
-              return;
             }
 
-            // Authenticated data frame: encrypted remote payload.
-            await _applyRemoteFrame(frame);
+            // Merge the authenticated remote payload into the local DB.
+            await _applyRecords(SyncEngine.decodePayload(decoded.payload));
+
+            // On the first authenticated frame, answer with our snapshot so the
+            // two sides converge.
+            if (firstFrame) await _sendLocalPayload(channel);
           } catch (e, s) {
             lastError = 'Sync frame error: $e';
             unawaited(ErrorLog.instance
@@ -528,14 +584,19 @@ class SyncServer extends ChangeNotifier {
     }
   }
 
-  /// Build our full snapshot, encrypt it, and push it to the peer.
+  /// Build our full snapshot, seal it under the session key, and push it to the
+  /// peer as a replay-stamped frame.
   Future<void> _sendLocalPayload(WebSocketChannel channel) async {
+    final key = _sessionKey;
+    if (key == null) return;
     try {
       final records = await SyncRepo.instance.buildAll();
       records.addAll(await SimSyncRepo.instance.buildAll());
       final json = SyncEngine.encodePayload(records);
-      final encrypted = await CryptoService.instance.encryptSecret(json);
-      channel.sink.add(encrypted);
+      _sendCounter += 1;
+      final frame = await CryptoService.instance
+          .sealFrame(key, counter: _sendCounter, payload: json);
+      channel.sink.add(frame);
     } catch (e) {
       lastError = 'Failed to send snapshot: $e';
       notifyListeners();
@@ -566,6 +627,8 @@ class SyncServer extends ChangeNotifier {
   /// skipped without aborting the rest.
   Future<void> _pushToPeers({bool force = false}) async {
     if (_peers.isEmpty) return;
+    final key = _sessionKey;
+    if (key == null) return;
     try {
       final records = await SyncRepo.instance.buildAll();
       records.addAll(await SimSyncRepo.instance.buildAll());
@@ -575,10 +638,12 @@ class SyncServer extends ChangeNotifier {
       final hash = json.hashCode;
       if (!force && hash == _lastSentHash) return;
       _lastSentHash = hash;
-      final encrypted = await CryptoService.instance.encryptSecret(json);
+      _sendCounter += 1;
+      final frame = await CryptoService.instance
+          .sealFrame(key, counter: _sendCounter, payload: json);
       for (final channel in _peers.toList()) {
         try {
-          channel.sink.add(encrypted);
+          channel.sink.add(frame);
         } catch (_) {
           // Broken pipe — leave teardown (onDone/onError) to remove it.
         }
@@ -589,10 +654,8 @@ class SyncServer extends ChangeNotifier {
     }
   }
 
-  /// Decrypt an incoming frame and merge it into the local database.
-  Future<void> _applyRemoteFrame(String frame) async {
-    final json = await CryptoService.instance.decryptSecret(frame);
-    final records = SyncEngine.decodePayload(json);
+  /// Merge already-decrypted, authenticated remote [records] into the local DB.
+  Future<void> _applyRecords(List<SyncRecord> records) async {
     // A connected desktop means Desktop Mode is gating this phone (the desktop
     // is the sole editor), so accept its ledger edits VERBATIM — clock-skew
     // can't then reject a genuine desktop edit/delete of an existing row.
