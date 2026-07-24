@@ -210,7 +210,7 @@ class _SandboxScreenState extends State<SandboxScreen>
     final pal = context.nqe;
     return Column(
       children: [
-        _Header(onSelect: _select),
+        _Header(onSelect: _select, showMetrics: false),
         Material(
           color: pal.bg,
           child: TabBar(
@@ -401,7 +401,10 @@ class _OverviewStrip extends StatelessWidget {
 /// Top summary + controls (feed toggle, reset, notifications).
 class _Header extends StatelessWidget {
   final ValueChanged<String> onSelect;
-  const _Header({required this.onSelect});
+  // On desktop the Overview strip already shows Equity/Free cash, so the header
+  // hides its own metric row to avoid a duplicated stats surface.
+  final bool showMetrics;
+  const _Header({required this.onSelect, this.showMetrics = true});
 
   @override
   Widget build(BuildContext context) {
@@ -524,17 +527,22 @@ class _Header extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 6),
-          Row(
-            children: [
-              _metric(context, 'Equity', simMoney(equity, currency: cur),
-                  pal.textHi),
-              _metric(context, 'Unrealized P/L',
-                  simSignedMoney(unreal, currency: cur), NqeColors.pnl(unreal)),
-              _metric(context, 'Free cash', simMoney(cash, currency: cur),
-                  pal.textHi),
-            ],
-          ),
+          if (showMetrics) ...[
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                _metric(context, 'Equity', simMoney(equity, currency: cur),
+                    pal.textHi),
+                _metric(
+                    context,
+                    'Unrealized P/L',
+                    simSignedMoney(unreal, currency: cur),
+                    NqeColors.pnl(unreal)),
+                _metric(context, 'Free cash', simMoney(cash, currency: cur),
+                    pal.textHi),
+              ],
+            ),
+          ],
         ],
       ),
     );

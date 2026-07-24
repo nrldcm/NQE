@@ -370,11 +370,16 @@ class SimState extends ChangeNotifier {
           break;
         }
       }
-      acc ??= _pf?.account;
-      if (acc != null) {
-        final kind = (r['kind'] ?? '').toString();
-        final amount =
-            (r['amount'] is num) ? (r['amount'] as num).toDouble() : 0.0;
+      final kind = (r['kind'] ?? '').toString();
+      final amount =
+          (r['amount'] is num) ? (r['amount'] as num).toDouble() : 0.0;
+      if (kind == 'delete') {
+        // Authoritative profile delete (keeps at least one).
+        if (accId.isNotEmpty && accounts.length > 1) {
+          await _db.deleteAccount(accId);
+          touched = true;
+        }
+      } else if (acc != null) {
         switch (kind) {
           case 'topup':
             if (amount > 0) await _applyTopUp(acc, amount);
@@ -382,6 +387,13 @@ class SimState extends ChangeNotifier {
             if (amount > 0) await _applyCashOut(acc, amount);
           case 'reset':
             await _resetCore(acc);
+          case 'rename':
+            final n = (r['name'] ?? '').toString().trim();
+            if (n.isNotEmpty) {
+              acc.name = n;
+              acc.updatedAtMs = _now();
+              await _db.upsertAccount(acc);
+            }
         }
         touched = true;
       }
@@ -393,14 +405,19 @@ class SimState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Queue a wallet/reset command for the phone to apply (desktop mirror path).
-  Future<void> _forwardIntent(String kind, double amount) async {
-    final accId = _pf?.account.id ?? kDefaultAccountId;
+  /// Queue a command for the phone (authority) to apply — the desktop mirror
+  /// can't mutate the shared account directly. Carries an optional profile name
+  /// / currency for create & rename forwarding.
+  Future<void> _forwardIntent(String kind, double amount,
+      {String? accId, String? name, String? currency}) async {
+    final id = accId ?? _pf?.account.id ?? kDefaultAccountId;
     await _serial(() => _db.insertIntent({
           'id': uid(),
-          'account_id': accId,
+          'account_id': id,
           'kind': kind,
           'amount': amount,
+          if (name != null) 'name': name,
+          if (currency != null) 'currency': currency,
           'created_at': _now(),
           'updated_at': _now(),
         }));
@@ -427,11 +444,10 @@ class SimState extends ChangeNotifier {
 
   // ---- profiles ------------------------------------------------------------
 
-  /// True when profile management (create/rename/delete) is allowed here. A
-  /// paired desktop mirror is a thin client whose account deletes/renames the
-  /// phone (source of truth) would reject or resurrect, so profiles are managed
-  /// on the phone only. Switching among synced profiles is always allowed.
-  bool get canManageProfiles => !mirror;
+  /// Profile management (create/rename/delete) is available everywhere. On a
+  /// paired desktop mirror the rename/delete are forwarded to the phone
+  /// (authority); a create rides the normal new-id sync.
+  bool get canManageProfiles => true;
 
   /// Switch the active profile (a local, per-device view choice — persisted so
   /// it survives a restart, but never synced).
@@ -443,14 +459,14 @@ class SimState extends ChangeNotifier {
     await _serial(_reloadFromDb);
   }
 
-  /// Create a new sandbox profile and switch to it. Returns the new id (or the
-  /// current one if creation isn't allowed on a mirror).
+  /// Create a new sandbox profile and switch to it. Returns the new id. Works
+  /// on a mirror too — the new (new-id) account syncs to the phone, which
+  /// accepts brand-new rows.
   Future<String> createProfile({
     required String name,
     required String currency,
     required double startingCash,
   }) async {
-    if (mirror) return _pf?.account.id ?? '';
     final a = SimAccount(
       id: uid(),
       name: name.trim().isEmpty ? 'Profile' : name.trim(),
@@ -466,25 +482,37 @@ class SimState extends ChangeNotifier {
     return a.id;
   }
 
-  /// Rename a profile.
+  /// Rename a profile. On a mirror, also forward the rename so the phone
+  /// (authority) applies it — an LWW-only rename would be clock-dependent.
   Future<void> renameProfile(String id, String name) async {
-    if (mirror) return;
     final n = name.trim();
     if (n.isEmpty) return;
     final idx = _accounts.indexWhere((x) => x.id == id);
-    if (idx < 0) return;
-    final a = _accounts[idx];
-    a.name = n;
-    a.updatedAtMs = _now();
-    await _serial(() => _db.upsertAccount(a));
-    await _serial(_reloadFromDb);
+    if (idx >= 0) {
+      final a = _accounts[idx];
+      a.name = n;
+      a.updatedAtMs = _now();
+      await _serial(() => _db.upsertAccount(a));
+      await _serial(_reloadFromDb);
+    }
+    if (mirror) await _forwardIntent('rename', 0, accId: id, name: n);
   }
 
-  /// Delete a profile (keeps at least one). Falls back to the first remaining
-  /// profile if the active one was removed.
+  /// Delete a profile (keeps at least one). On a mirror the delete is forwarded
+  /// to the phone (whose authoritative removal + tombstone syncs back), so it
+  /// can't be resurrected; locally we just switch away from it.
   Future<bool> deleteProfile(String id) async {
-    if (mirror) return false;
     if (_accounts.length <= 1) return false;
+    if (mirror) {
+      if (_activeId == id) {
+        final other = _accounts.firstWhere((a) => a.id != id);
+        _activeId = other.id;
+        await _writeActivePref(other.id);
+        await _serial(_reloadFromDb);
+      }
+      await _forwardIntent('delete', 0, accId: id);
+      return true;
+    }
     await _serial(() => _db.deleteAccount(id));
     if (_activeId == id) _activeId = null;
     await _serial(_reloadFromDb);

@@ -49,7 +49,7 @@ class SimDb {
   static Future<Database> openAtPath(String path) {
     return openDatabase(
       path,
-      version: 3,
+      version: 4,
       onConfigure: (d) async => d.execute('PRAGMA foreign_keys = ON'),
       onCreate: (d, _) async => _create(d),
       onUpgrade: (d, _, __) async {
@@ -59,6 +59,13 @@ class SimDb {
         // v2: change-tracking columns + tombstones for cross-device sync.
         try {
           await d.execute('ALTER TABLE sim_orders ADD COLUMN updated_at INTEGER');
+        } catch (_) {/* already present */}
+        // v4: intents can carry a profile name (create/rename forwarding).
+        try {
+          await d.execute('ALTER TABLE sim_intents ADD COLUMN name TEXT');
+        } catch (_) {/* already present */}
+        try {
+          await d.execute('ALTER TABLE sim_intents ADD COLUMN currency TEXT');
         } catch (_) {/* already present */}
       },
     );
@@ -99,6 +106,7 @@ class SimDb {
     await d.execute('''
       CREATE TABLE IF NOT EXISTS sim_intents(
         id TEXT PRIMARY KEY, account_id TEXT, kind TEXT, amount REAL,
+        name TEXT, currency TEXT,
         created_at INTEGER, updated_at INTEGER)''');
     // Deletions are recorded so a closed position / cancelled order propagates
     // across paired devices (last-writer-wins with the live rows).
