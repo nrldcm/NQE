@@ -73,8 +73,10 @@ class _SandboxChartPaneState extends State<SandboxChartPane> {
             ),
             const SizedBox(height: 8),
             if (showTv)
+              // Give TradingView a tall footprint so it fills the chart area
+              // like the built-in chart (which adds indicator sub-panels).
               SandboxTradingViewChart(
-                  symbol: widget.symbol, height: widget.height + 62)
+                  symbol: widget.symbol, height: widget.height + 120)
             else
               SandboxCandleChart(
                   symbol: widget.symbol,

@@ -37,6 +37,7 @@ class _TvIframeChart extends StatefulWidget {
 
 class _TvIframeChartState extends State<_TvIframeChart> {
   late String _viewType;
+  String? _blobUrl;
 
   @override
   void initState() {
@@ -52,19 +53,41 @@ class _TvIframeChartState extends State<_TvIframeChart> {
     }
   }
 
+  @override
+  void dispose() {
+    _revokeBlob();
+    super.dispose();
+  }
+
+  void _revokeBlob() {
+    final u = _blobUrl;
+    if (u != null) {
+      try {
+        html.Url.revokeObjectUrl(u);
+      } catch (_) {}
+      _blobUrl = null;
+    }
+  }
+
   void _register() {
     // A unique viewType per (symbol, theme, instance) so re-registering after a
-    // symbol/theme change produces a fresh iframe with the new srcdoc.
+    // symbol/theme change produces a fresh iframe.
     final theme = widget.dark ? 'dark' : 'light';
-    _viewType =
-        'tv-${identityHashCode(this)}-${widget.symbol}-$theme';
+    _viewType = 'tv-${identityHashCode(this)}-${widget.symbol}-$theme';
     final bg = widget.dark ? '#0A0A0A' : '#FFFFFF';
     final srcdoc = tvHtml(tvSymbolFor(widget.symbol), theme, bg);
+    // IMPORTANT: load the widget HTML from a blob: URL, NOT srcdoc. A srcdoc
+    // iframe has an opaque/null origin, and TradingView's tv.js refuses to
+    // initialise there ("Chart unavailable"). A blob: URL inherits the served
+    // page's origin, so the widget loads normally.
+    _revokeBlob();
+    final blob = html.Blob(<Object>[srcdoc], 'text/html');
+    _blobUrl = html.Url.createObjectUrlFromBlob(blob);
+    final url = _blobUrl!;
     ui_web.platformViewRegistry.registerViewFactory(_viewType, (int _) {
       final iframe = html.IFrameElement()
-        ..width = '100%'
-        ..height = '100%'
-        ..srcdoc = srcdoc
+        ..src = url
+        ..allowFullscreen = true
         ..style.border = 'none'
         ..style.width = '100%'
         ..style.height = '100%';
@@ -75,6 +98,7 @@ class _TvIframeChartState extends State<_TvIframeChart> {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
+      width: double.infinity,
       height: widget.height,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(12),

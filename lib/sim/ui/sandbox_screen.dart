@@ -33,11 +33,12 @@ class _SandboxScreenState extends State<SandboxScreen>
   String _symbol = 'BTCUSDT';
   SimNotice? _shownNotice;
   TabController? _tabs;
+  int _tabIndex = 0;
 
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 5, vsync: this);
+    _tabs = TabController(length: 5, vsync: this)..addListener(_onTabChanged);
     simState.init();
     // Subscribe the whole catalogue once, off-build (batched, single notify),
     // so market rows show live quotes without ever subscribing during build.
@@ -54,6 +55,17 @@ class _SandboxScreenState extends State<SandboxScreen>
     _tabs?.dispose();
     super.dispose();
   }
+
+  void _onTabChanged() {
+    final i = _tabs?.index ?? 0;
+    if (i != _tabIndex && mounted) setState(() => _tabIndex = i);
+  }
+
+  // Swipe navigation is disabled ON the Trade tab (index 0) so a horizontal
+  // drag on the chart pans/zooms it instead of flicking to another tab. Every
+  // other tab keeps swipe navigation.
+  ScrollPhysics? get _tabPhysics =>
+      _tabIndex == 0 ? const NeverScrollableScrollPhysics() : null;
 
   void _onTick() {
     // The candle chart advances itself from simState on each tick; here we only
@@ -152,6 +164,7 @@ class _SandboxScreenState extends State<SandboxScreen>
         Expanded(
           child: TabBarView(
             controller: _tabs,
+            physics: _tabPhysics,
             children: [
               _tradeTab(context),
               const Padding(
@@ -235,6 +248,7 @@ class _SandboxScreenState extends State<SandboxScreen>
         Expanded(
           child: TabBarView(
             controller: _tabs,
+            physics: _tabPhysics,
             children: [
               _desktopTradeTab(context),
               // Wallet — constrained + centred; a full-width wallet card reads
