@@ -144,6 +144,7 @@ class PerfMonth {
   double startBal;
   double endBal;
   double wireOut; // + = withdrawal (out), − = deposit (in)
+  bool periodStart; // begins a new "time period" cumulative here
   String note;
   String createdAt;
 
@@ -155,6 +156,7 @@ class PerfMonth {
     this.startBal = 0,
     this.endBal = 0,
     this.wireOut = 0,
+    this.periodStart = false,
     this.note = '',
     required this.createdAt,
   });
@@ -170,6 +172,7 @@ class PerfMonth {
         'start_bal': _fin(startBal),
         'end_bal': _fin(endBal),
         'wire_out': _fin(wireOut),
+        'period_start': periodStart ? 1 : 0,
         'note': note,
         'created_at': createdAt,
       };
@@ -182,6 +185,7 @@ class PerfMonth {
         startBal: _d(m['start_bal']),
         endBal: _d(m['end_bal']),
         wireOut: _d(m['wire_out']),
+        periodStart: (m['period_start'] as num?)?.toInt() == 1,
         note: _s(m['note']),
         createdAt: _s(m['created_at']),
       );

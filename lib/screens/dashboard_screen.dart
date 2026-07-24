@@ -12,6 +12,7 @@ import '../widgets/common.dart';
 import '../widgets/nqe_logo.dart';
 import 'account_detail_screen.dart';
 import 'editors/account_edit_sheet.dart';
+import 'stats_screen.dart';
 
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key});
@@ -32,6 +33,47 @@ class DashboardScreen extends StatelessWidget {
                 _Header(),
                 const SizedBox(height: 20),
                 _HeroCard(),
+                const SizedBox(height: 12),
+                // Detailed per-account trading statistics live here in the
+                // overview (the Performance tab is the monthly summary).
+                Material(
+                  color: pal.surface,
+                  borderRadius: BorderRadius.circular(16),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(16),
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                        builder: (_) => const StatsScreen())),
+                    child: Container(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: pal.line),
+                      ),
+                      child: Row(children: [
+                        Icon(Icons.insights, size: 20, color: pal.textHi),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Trading statistics',
+                                  style: TextStyle(
+                                      color: pal.textHi,
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w700)),
+                              const SizedBox(height: 2),
+                              Text('Per-book charts & breakdown',
+                                  style: TextStyle(
+                                      color: pal.textLo, fontSize: 12)),
+                            ],
+                          ),
+                        ),
+                        Icon(Icons.chevron_right, size: 20, color: pal.textLo),
+                      ]),
+                    ),
+                  ),
+                ),
                 const SizedBox(height: 20),
                 if (appState.accounts.isNotEmpty) ...[
                   AllocationDonut(

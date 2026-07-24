@@ -6,8 +6,8 @@ import '../theme.dart';
 import 'books_screen.dart';
 import 'dashboard_screen.dart';
 import 'live_screen.dart';
+import 'performance_screen.dart';
 import 'settings_screen.dart';
-import 'stats_screen.dart';
 
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
@@ -24,7 +24,7 @@ class _HomeShellState extends State<HomeShell> {
     BooksScreen(),
     LiveScreen(),
     SandboxScreen(),
-    StatsScreen(),
+    PerformanceScreen(),
     SettingsScreen(),
   ];
 
@@ -62,7 +62,8 @@ class _HomeShellState extends State<HomeShell> {
             _dest(Icons.candlestick_chart_outlined, Icons.candlestick_chart,
                 'Live', pal),
             _dest(Icons.science_outlined, Icons.science, 'Trade', pal),
-            _dest(Icons.insights_outlined, Icons.insights, 'Stats', pal),
+            _dest(Icons.calendar_month_outlined, Icons.calendar_month,
+                'Performance', pal),
             _dest(Icons.settings_outlined, Icons.settings, 'Settings', pal),
           ],
         ),

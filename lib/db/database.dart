@@ -11,7 +11,7 @@ import '../models.dart';
 /// sqflite on-disk schema version. Bumped to 3 for LAN sync change-tracking
 /// (nullable `updated_at` columns + `sync_tombstones`). Kept local to the DB
 /// layer so the export/import model version (`kSchemaVersion`) is untouched.
-const int _kDbSchemaVersion = 5;
+const int _kDbSchemaVersion = 6;
 
 /// Tables that participate in LAN sync (each has an `id` PK and an `updated_at`
 /// change marker, and generates a tombstone on delete). `api_keys` is device-
@@ -86,6 +86,11 @@ class LedgerDb {
           await d.execute(
               "ALTER TABLE perf_months ADD COLUMN currency TEXT NOT NULL DEFAULT 'USD'");
         } catch (_) {/* already present */}
+        // v6: time-period marker on the monthly performance rows.
+        try {
+          await d.execute(
+              'ALTER TABLE perf_months ADD COLUMN period_start INTEGER NOT NULL DEFAULT 0');
+        } catch (_) {/* already present */}
       },
     );
   }
@@ -158,7 +163,8 @@ class LedgerDb {
         currency TEXT NOT NULL DEFAULT 'USD',
         sort_key INTEGER NOT NULL DEFAULT 0,
         start_bal REAL NOT NULL DEFAULT 0, end_bal REAL NOT NULL DEFAULT 0,
-        wire_out REAL NOT NULL DEFAULT 0, note TEXT NOT NULL DEFAULT '',
+        wire_out REAL NOT NULL DEFAULT 0, period_start INTEGER NOT NULL DEFAULT 0,
+        note TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL, updated_at TEXT
       )''');
     // v3: LAN sync tombstones. A hard-deleted syncable row leaves a marker here
