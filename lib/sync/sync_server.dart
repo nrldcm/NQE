@@ -115,29 +115,16 @@ class SyncServer extends ChangeNotifier {
   /// The one-time key the desktop must echo to authenticate.
   String get pairingKey => _pairingKey;
 
-  /// True when the server is serving over TLS (a bundled self-signed cert).
+  /// True when the server is serving over TLS. Currently always false — the LAN
+  /// server is plain HTTP (see the note in [start]); the data is encrypted at
+  /// the app layer regardless.
   bool _secure = false;
 
-  /// Scheme + full browser URL to open the web app (https when a cert is bound).
+  /// Scheme + full browser URL to open the web app.
   String get scheme => _secure ? 'https' : 'http';
   String get webUrl => '$scheme://${host ?? ''}:$port';
 
   bool get isRunning => status == SyncStatus.running;
-
-  /// Load the bundled self-signed cert/key into a TLS context, so the web app
-  /// is served over https/wss. Returns null (→ plain http fallback) if the
-  /// cert can't be loaded, so the server always comes up.
-  Future<SecurityContext?> _buildSecurityContext() async {
-    try {
-      final cert = await rootBundle.load('assets/tls/nqe_cert.pem');
-      final key = await rootBundle.load('assets/tls/nqe_key.pem');
-      return SecurityContext()
-        ..useCertificateChainBytes(cert.buffer.asUint8List())
-        ..usePrivateKeyBytes(key.buffer.asUint8List());
-    } catch (_) {
-      return null;
-    }
-  }
 
   /// Build the secure pairing payload handed to a desktop during pairing: the
   /// reachable sync endpoint + key, plus the phone's PIN credential so the
@@ -233,14 +220,17 @@ class SyncServer extends ChangeNotifier {
       _sendCounter = 0;
 
       final handler = _buildHandler();
-      // Serve over TLS (self-signed) when the cert is available, so the browser
-      // uses https/wss; fall back to plain http if it can't load.
-      final tls = await _buildSecurityContext();
-      _secure = tls != null;
+      // Serve over plain HTTP on the LAN. A phone-generated self-signed cert
+      // has no browser-trusted SAN for the (dynamic) LAN IP, so browsers
+      // HARD-REJECT it — you can't even "proceed anyway" — which broke access
+      // entirely. The ledger is protected regardless: every sync frame is
+      // AES-256-GCM encrypted at the app layer (key HKDF-derived from the
+      // access code). For real internet HTTPS, front the phone with a tunnel
+      // (e.g. Cloudflare) that terminates TLS.
+      _secure = false;
       // Auto-scan for an open port starting at the preferred one, so a busy or
-      // firewalled port doesn't break pairing. The bound port is advertised.
-      _server =
-          await bindWithFallback(handler, preferredPort, securityContext: tls);
+      // firewalled port doesn't break access. The bound port is advertised.
+      _server = await bindWithFallback(handler, preferredPort);
       port = _server!.port;
       _server!.autoCompress = true;
 
