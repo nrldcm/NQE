@@ -48,11 +48,16 @@ String tvHtml(String symbol, String theme, String bg) => '''
 <html>
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<style>html,body{height:100%;margin:0;padding:0;background:$bg;overflow:hidden}
-#wrap{position:absolute;inset:0}</style>
+<style>html,body{height:100%;width:100%;margin:0;padding:0;background:$bg;overflow:hidden}
+/* The chart container MUST fill the viewport: TradingView's autosize reads
+   this element's height, so if it collapses to content-height the widget
+   renders at its ~120px minimum. Absolute inset:0 pins it to the full page,
+   and the iframe TradingView injects inside inherits that 100% height. */
+#tv{position:absolute;top:0;left:0;right:0;bottom:0;width:100%;height:100%}
+#tv iframe{width:100%!important;height:100%!important}</style>
 </head>
 <body>
-<div id="wrap"><div id="tv"></div></div>
+<div id="tv"></div>
 <script src="https://s3.tradingview.com/tv.js"></script>
 <script>
 try {
