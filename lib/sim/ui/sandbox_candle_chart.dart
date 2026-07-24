@@ -43,20 +43,26 @@ const _obvColor = Color(0xFF66BB6A);
 // Colour for user-drawn tools (TradingView-style blue).
 const _drawColor = Color(0xFF2962FF);
 
-/// Left-rail drawing tools.
-enum _DrawTool { cursor, hline, trend }
+/// Left-rail drawing tools (TradingView-style).
+enum _DrawTool { cursor, trend, ray, hline, vline, rect, fib, brush, text }
 
-/// A user-placed horizontal price line.
-class _HLine {
-  final double price;
-  const _HLine(this.price);
-}
+bool _isDrawTool(_DrawTool t) => t != _DrawTool.cursor;
 
-/// A user-drawn trend line, stored in (fractionOfPlotWidth, price) space so it
-/// tracks the chart's transform as new candles arrive.
-class _TrendLine {
-  final double fx1, p1, fx2, p2;
-  const _TrendLine(this.fx1, this.p1, this.fx2, this.p2);
+/// A user-drawn shape. Every anchor is stored in (fx, price) space —
+/// fx = fraction of the plot width [0..1], price = value on the main axis — so
+/// the shape tracks the chart's transform as new candles arrive and the axis
+/// rescales. Interpretation of [pts] by [type]:
+///  • hline  → 1 anchor, only its price matters (spans full width)
+///  • vline  → 1 anchor, only its fx matters (spans full height)
+///  • trend/ray/rect/fib → 2 anchors (endpoints / opposite corners)
+///  • brush  → N anchors (free-hand polyline)
+///  • text   → 1 anchor + [label]
+class _Shape {
+  final _DrawTool type;
+  final List<Offset> pts; // Offset(fx, price)
+  String label;
+  _Shape(this.type, this.pts, {this.label = ''});
+  _Shape copy() => _Shape(type, [for (final p in pts) p], label: label);
 }
 
 class SandboxCandleChart extends StatefulWidget {
@@ -82,12 +88,18 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
 
   // ---- drawing tools -------------------------------------------------------
   _DrawTool _tool = _DrawTool.cursor;
-  final List<_HLine> _hlines = [];
-  final List<_TrendLine> _trends = [];
-  _TrendLine? _trendPreview;
+  final List<_Shape> _shapes = [];
+  _Shape? _preview; // shape being drawn right now
+  int _selected = -1; // index into _shapes of the selected shape (-1 = none)
+  int _grab = -2; // -2 none, -1 whole-shape move, >=0 = dragging that endpoint
+  Offset? _dragLast; // last drag point in (fx, price) space
+  bool _magnet = false; // snap anchors to the nearest candle O/H/L/C
+  bool _locked = false; // lock: block create / move / delete
+  bool _hidden = false; // hide all drawings
   // Cached plot geometry from the last build, so gestures can map screen
   // positions to price / fractional-x exactly like the painter does.
   double _lo = 0, _hi = 1, _plotW = 1;
+  List<SimCandle> _lastCandles = const [];
 
   void _maybeFetchLive() {
     final live = simState.price.mode == FeedMode.live;
@@ -115,6 +127,7 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
     final price = simState.priceOf(widget.symbol);
     simState.candles.update(widget.symbol, _tf, price);
     final candles = simState.candles.series(widget.symbol, _tf, price);
+    _lastCandles = candles;
 
     final shown = (_cross != null && _cross! >= 0 && _cross! < candles.length)
         ? candles[_cross!]
@@ -194,37 +207,14 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
                       textColor: pal.textLo,
                       orderLine: line?.price,
                       orderUp: line?.isBuy ?? true,
-                      hlines: _hlines,
-                      trends: _trends,
-                      trendPreview: _trendPreview,
+                      shapes: _hidden ? const [] : _shapes,
+                      preview: _hidden ? null : _preview,
+                      selected: _hidden ? -1 : _selected,
                     ),
                   );
-                  // Only the trend tool needs a two-axis pan. Cursor/hline use a
-                  // horizontal-only drag so a VERTICAL swipe over the chart still
-                  // scrolls the surrounding page instead of being swallowed.
-                  final gesture = _tool == _DrawTool.trend
-                      ? GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onPanStart: (d) => _onPanStart(
-                              d.localPosition, width, candles.length),
-                          onPanUpdate: (d) => _onPanUpdate(
-                              d.localPosition, width, candles.length),
-                          onPanEnd: (_) => _onPanEnd(),
-                          child: painter,
-                        )
-                      : GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onTapDown: (d) => _onTapDown(
-                              d.localPosition, width, candles.length),
-                          onHorizontalDragStart: (d) => _onCrossDrag(
-                              d.localPosition.dx, width, candles.length),
-                          onHorizontalDragUpdate: (d) => _onCrossDrag(
-                              d.localPosition.dx, width, candles.length),
-                          child: painter,
-                        );
                   return Stack(
                     children: [
-                      gesture,
+                      _buildGesture(painter, width, candles.length),
                       Positioned(left: 0, top: 0, child: _drawingRail(context)),
                     ],
                   );
@@ -288,138 +278,394 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
 
   double _fxFromX(double dx) => (dx.clamp(0.0, _plotW)) / _plotW;
 
-  // ---- tool-aware gesture handlers ----------------------------------------
+  // Inverse mappings (data → screen), matching the painter, for hit-testing.
+  double _yFromPrice(double p) {
+    final span = (_hi - _lo).abs() < 1e-12 ? 1.0 : (_hi - _lo);
+    return widget.height * (_hi - p) / span;
+  }
 
-  void _onTapDown(Offset p, double width, int n) {
+  double _xFromFx(double fx) => fx * _plotW;
+
+  Offset _toScreen(Offset dataPt) =>
+      Offset(_xFromFx(dataPt.dx), _yFromPrice(dataPt.dy));
+
+  /// A tap/drag point in (fx, price) space — optionally magnet-snapped to the
+  /// nearest candle open/high/low/close at that bar.
+  Offset _toData(Offset p) {
+    var fx = _fxFromX(p.dx);
+    var price = _priceFromY(p.dy);
+    if (_magnet && _lastCandles.isNotEmpty) {
+      final i = (fx * _lastCandles.length).floor().clamp(0, _lastCandles.length - 1);
+      final c = _lastCandles[i];
+      double best = c.c;
+      for (final v in [c.o, c.h, c.l, c.c]) {
+        if ((v - price).abs() < (best - price).abs()) best = v;
+      }
+      price = best;
+    }
+    return Offset(fx, price);
+  }
+
+  // ---- gesture routing -----------------------------------------------------
+
+  /// The chart's gesture layer depends on the mode:
+  ///  • a draw tool → full pan/tap to CREATE a shape;
+  ///  • cursor with a selected shape → full pan to MOVE it / drag a handle;
+  ///  • cursor, nothing selected → tap to select + horizontal-drag crosshair
+  ///    (so a vertical swipe still scrolls the surrounding page).
+  Widget _buildGesture(Widget painter, double width, int n) {
+    if (_isDrawTool(_tool)) {
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapUp: (d) => _onDrawTap(d.localPosition),
+        onPanStart: (d) => _onDrawStart(d.localPosition),
+        onPanUpdate: (d) => _onDrawUpdate(d.localPosition),
+        onPanEnd: (_) => _onDrawEnd(),
+        child: painter,
+      );
+    }
+    if (_selected >= 0) {
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapUp: (d) => _onCursorTap(d.localPosition),
+        onPanStart: (d) => _onMoveStart(d.localPosition),
+        onPanUpdate: (d) => _onMoveUpdate(d.localPosition),
+        onPanEnd: (_) => _dragLast = null,
+        child: painter,
+      );
+    }
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapUp: (d) => _onCursorTap(d.localPosition),
+      onHorizontalDragStart: (d) => _updateCross(d.localPosition.dx, width, n),
+      onHorizontalDragUpdate: (d) => _updateCross(d.localPosition.dx, width, n),
+      onHorizontalDragEnd: (_) => setState(() => _cross = null),
+      child: painter,
+    );
+  }
+
+  // ---- create a shape ------------------------------------------------------
+
+  void _onDrawTap(Offset p) {
+    if (_locked || p.dy > widget.height) return;
+    final d = _toData(p);
     switch (_tool) {
-      case _DrawTool.cursor:
-        _updateCross(p.dx, width, n);
       case _DrawTool.hline:
-        // Only place a line when the tap is in the main price panel — a tap in
-        // a sub-panel (Volume/RSI/…) would otherwise snap to the bottom price.
-        if (p.dy <= widget.height) {
-          setState(() => _hlines.add(_HLine(_priceFromY(p.dy))));
+        _commit(_Shape(_DrawTool.hline, [d]));
+      case _DrawTool.vline:
+        _commit(_Shape(_DrawTool.vline, [d]));
+      case _DrawTool.text:
+        _addText(d);
+      default:
+        break; // the rest are drawn with a drag
+    }
+  }
+
+  void _onDrawStart(Offset p) {
+    if (_locked || p.dy > widget.height) return;
+    final d = _toData(p);
+    switch (_tool) {
+      case _DrawTool.trend:
+      case _DrawTool.ray:
+      case _DrawTool.rect:
+      case _DrawTool.fib:
+        setState(() => _preview = _Shape(_tool, [d, d]));
+      case _DrawTool.brush:
+        setState(() => _preview = _Shape(_DrawTool.brush, [d]));
+      default:
+        break;
+    }
+  }
+
+  void _onDrawUpdate(Offset p) {
+    final pv = _preview;
+    if (pv == null) return;
+    final d = _toData(p);
+    setState(() {
+      if (pv.type == _DrawTool.brush) {
+        pv.pts.add(d);
+      } else {
+        pv.pts[1] = d;
+      }
+    });
+  }
+
+  void _onDrawEnd() {
+    final pv = _preview;
+    if (pv == null) return;
+    setState(() {
+      _shapes.add(pv);
+      _preview = null;
+      _selected = _shapes.length - 1;
+      _tool = _DrawTool.cursor; // one shape per pick, like TradingView
+    });
+  }
+
+  Future<void> _addText(Offset d) async {
+    final ctrl = TextEditingController();
+    final s = await showDialog<String>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('Add text'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: 'Label'),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(c), child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(c, ctrl.text),
+              child: const Text('Add')),
+        ],
+      ),
+    );
+    if (s != null && s.trim().isNotEmpty) {
+      _commit(_Shape(_DrawTool.text, [d], label: s.trim()));
+    }
+  }
+
+  void _commit(_Shape s) {
+    setState(() {
+      _shapes.add(s);
+      _selected = _shapes.length - 1;
+      _tool = _DrawTool.cursor;
+    });
+  }
+
+  // ---- select / move -------------------------------------------------------
+
+  void _onCursorTap(Offset p) {
+    // Hit-test existing shapes first; a hit selects it, otherwise place the
+    // crosshair and deselect.
+    final hit = _hitTest(p);
+    if (hit >= 0) {
+      setState(() {
+        _selected = hit;
+        _cross = null;
+      });
+    } else {
+      setState(() => _selected = -1);
+      final n = _lastCandles.length;
+      if (n > 0) _updateCross(p.dx, _plotW + 58.0, n);
+    }
+  }
+
+  void _onMoveStart(Offset p) {
+    if (_locked || _selected < 0 || _selected >= _shapes.length) return;
+    final s = _shapes[_selected];
+    // Grab the nearest endpoint handle if close to one, else move the whole
+    // shape.
+    _grab = -1;
+    for (var i = 0; i < s.pts.length; i++) {
+      if ((_toScreen(s.pts[i]) - p).distance <= 14) {
+        _grab = i;
+        break;
+      }
+    }
+    // Only start moving if the drag actually began on the shape (a handle or
+    // its body); otherwise deselect so an empty drag doesn't drag it around.
+    if (_grab < 0 && !_shapeHit(s, p)) {
+      setState(() => _selected = -1);
+      _dragLast = null;
+      return;
+    }
+    _dragLast = _toData(p);
+  }
+
+  void _onMoveUpdate(Offset p) {
+    if (_locked || _selected < 0 || _dragLast == null) return;
+    final s = _shapes[_selected];
+    final now = _toData(p);
+    final dfx = now.dx - _dragLast!.dx;
+    final dp = now.dy - _dragLast!.dy;
+    setState(() {
+      if (_grab >= 0 && _grab < s.pts.length) {
+        s.pts[_grab] = now; // drag a single endpoint to that position
+      } else {
+        for (var i = 0; i < s.pts.length; i++) {
+          s.pts[i] = Offset(s.pts[i].dx + dfx, s.pts[i].dy + dp);
         }
-      case _DrawTool.trend:
-        break; // trend lines are drawn with a drag
+      }
+    });
+    _dragLast = now;
+  }
+
+  /// Distance-based hit test: returns the index of the shape under [p] (within
+  /// ~12px), searching newest-first so the top-most is picked.
+  int _hitTest(Offset p) {
+    for (var i = _shapes.length - 1; i >= 0; i--) {
+      if (_shapeHit(_shapes[i], p)) return i;
     }
+    return -1;
   }
 
-  /// Crosshair drag (cursor tool only) — a horizontal-only recognizer, so a
-  /// vertical swipe still scrolls the page.
-  void _onCrossDrag(double dx, double width, int n) {
-    if (_tool == _DrawTool.cursor) _updateCross(dx, width, n);
-  }
-
-  void _onPanStart(Offset p, double width, int n) {
-    switch (_tool) {
-      case _DrawTool.cursor:
-        _updateCross(p.dx, width, n);
-      case _DrawTool.trend:
-        final fx = _fxFromX(p.dx), price = _priceFromY(p.dy);
-        setState(() => _trendPreview = _TrendLine(fx, price, fx, price));
+  bool _shapeHit(_Shape s, Offset p) {
+    const tol = 12.0;
+    switch (s.type) {
       case _DrawTool.hline:
-        break;
-    }
-  }
-
-  void _onPanUpdate(Offset p, double width, int n) {
-    switch (_tool) {
-      case _DrawTool.cursor:
-        _updateCross(p.dx, width, n);
-      case _DrawTool.trend:
-        final prev = _trendPreview;
-        if (prev != null) {
-          setState(() => _trendPreview =
-              _TrendLine(prev.fx1, prev.p1, _fxFromX(p.dx), _priceFromY(p.dy)));
+        return (p.dy - _yFromPrice(s.pts[0].dy)).abs() <= tol;
+      case _DrawTool.vline:
+        return (p.dx - _xFromFx(s.pts[0].dx)).abs() <= tol;
+      case _DrawTool.text:
+        return (_toScreen(s.pts[0]) - p).distance <= 22;
+      case _DrawTool.rect:
+        final a = _toScreen(s.pts[0]), b = _toScreen(s.pts[1]);
+        final r = Rect.fromPoints(a, b).inflate(tol);
+        final inner = Rect.fromPoints(a, b).deflate(tol);
+        return r.contains(p) && !inner.contains(p);
+      case _DrawTool.fib:
+        final a = _toScreen(s.pts[0]), b = _toScreen(s.pts[1]);
+        if (p.dx < a.dx - tol && p.dx < b.dx - tol) return false;
+        for (final lvl in const [0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0]) {
+          final y = a.dy + (b.dy - a.dy) * lvl;
+          if ((p.dy - y).abs() <= tol) return true;
         }
-      case _DrawTool.hline:
-        break;
+        return false;
+      case _DrawTool.brush:
+        for (var i = 0; i + 1 < s.pts.length; i++) {
+          if (_distToSeg(p, _toScreen(s.pts[i]), _toScreen(s.pts[i + 1])) <=
+              tol) {
+            return true;
+          }
+        }
+        return false;
+      default: // trend / ray
+        return _distToSeg(p, _toScreen(s.pts[0]), _toScreen(s.pts[1])) <= tol;
     }
   }
 
-  void _onPanEnd() {
-    switch (_tool) {
-      case _DrawTool.cursor:
-        setState(() => _cross = null);
-      case _DrawTool.trend:
-        final prev = _trendPreview;
-        setState(() {
-          if (prev != null) _trends.add(prev);
-          _trendPreview = null;
-        });
-      case _DrawTool.hline:
-        break;
-    }
+  double _distToSeg(Offset p, Offset a, Offset b) {
+    final ab = b - a;
+    final len2 = ab.dx * ab.dx + ab.dy * ab.dy;
+    if (len2 < 1e-9) return (p - a).distance;
+    var t = ((p.dx - a.dx) * ab.dx + (p.dy - a.dy) * ab.dy) / len2;
+    t = t.clamp(0.0, 1.0);
+    return (p - Offset(a.dx + ab.dx * t, a.dy + ab.dy * t)).distance;
+  }
+
+  void _deleteSelected() {
+    if (_selected < 0 || _selected >= _shapes.length) return;
+    setState(() {
+      _shapes.removeAt(_selected);
+      _selected = -1;
+    });
   }
 
   /// TradingView-style vertical rail of drawing tools on the chart's left edge.
   Widget _drawingRail(BuildContext context) {
     final pal = context.nqe;
-    Widget btn(_DrawTool tool, IconData icon, String tip) {
-      final active = _tool == tool;
+
+    Widget tool(_DrawTool t, IconData icon, String tip) {
+      final active = _tool == t;
       return Tooltip(
         message: tip,
         child: InkWell(
-          onTap: () => setState(() => _tool = tool),
+          onTap: () => setState(() => _tool = t),
           borderRadius: BorderRadius.circular(6),
           child: Container(
             width: 26,
             height: 26,
-            margin: const EdgeInsets.symmetric(vertical: 2),
+            margin: const EdgeInsets.symmetric(vertical: 1.5),
             decoration: BoxDecoration(
               color: active ? _drawColor.withOpacity(0.18) : Colors.transparent,
               borderRadius: BorderRadius.circular(6),
               border: Border.all(
                   color: active ? _drawColor : Colors.transparent, width: 1),
             ),
-            child: Icon(icon,
-                size: 15, color: active ? _drawColor : pal.textLo),
+            child: Icon(icon, size: 15, color: active ? _drawColor : pal.textLo),
           ),
         ),
       );
     }
 
+    Widget toggle(bool on, IconData icon, String tip, VoidCallback onTap) {
+      return Tooltip(
+        message: tip,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(6),
+          child: Container(
+            width: 26,
+            height: 26,
+            margin: const EdgeInsets.symmetric(vertical: 1.5),
+            decoration: BoxDecoration(
+              color: on ? NqeColors.gain.withOpacity(0.18) : Colors.transparent,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Icon(icon,
+                size: 15, color: on ? NqeColors.gain : pal.textLo),
+          ),
+        ),
+      );
+    }
+
+    Widget divider() => Container(
+          width: 16,
+          height: 1,
+          margin: const EdgeInsets.symmetric(vertical: 2.5),
+          color: pal.line,
+        );
+
+    final hasShapes = _shapes.isNotEmpty;
     return Container(
       margin: const EdgeInsets.only(left: 2, top: 2),
       padding: const EdgeInsets.symmetric(vertical: 3, horizontal: 2),
       decoration: BoxDecoration(
-        color: pal.bg.withOpacity(0.72),
+        color: pal.bg.withOpacity(0.82),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: pal.line),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          btn(_DrawTool.cursor, Icons.near_me_outlined, 'Cursor / crosshair'),
-          btn(_DrawTool.hline, Icons.horizontal_rule, 'Horizontal line'),
-          btn(_DrawTool.trend, Icons.show_chart, 'Trend line'),
-          Container(
-            width: 16,
-            height: 1,
-            margin: const EdgeInsets.symmetric(vertical: 3),
-            color: pal.line,
-          ),
+          tool(_DrawTool.cursor, Icons.near_me_outlined, 'Cursor / crosshair'),
+          tool(_DrawTool.trend, Icons.trending_up, 'Trend line'),
+          tool(_DrawTool.ray, Icons.north_east, 'Ray'),
+          tool(_DrawTool.hline, Icons.horizontal_rule, 'Horizontal line'),
+          tool(_DrawTool.vline, Icons.straighten, 'Vertical line'),
+          tool(_DrawTool.rect, Icons.crop_square, 'Rectangle'),
+          tool(_DrawTool.fib, Icons.stacked_line_chart, 'Fib retracement'),
+          tool(_DrawTool.brush, Icons.gesture, 'Brush'),
+          tool(_DrawTool.text, Icons.title, 'Text'),
+          divider(),
+          toggle(_magnet, Icons.attractions_outlined, 'Magnet (snap to OHLC)',
+              () => setState(() => _magnet = !_magnet)),
+          toggle(_locked, _locked ? Icons.lock_outline : Icons.lock_open,
+              _locked ? 'Locked' : 'Lock drawings',
+              () => setState(() => _locked = !_locked)),
+          toggle(
+              _hidden,
+              _hidden ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+              _hidden ? 'Drawings hidden' : 'Hide drawings',
+              () => setState(() => _hidden = !_hidden)),
+          divider(),
           Tooltip(
-            message: 'Clear drawings',
+            message: _selected >= 0 ? 'Delete selected' : 'Clear all drawings',
             child: InkWell(
-              onTap: (_hlines.isEmpty && _trends.isEmpty)
+              onTap: !hasShapes
                   ? null
-                  : () => setState(() {
-                        _hlines.clear();
-                        _trends.clear();
-                        _trendPreview = null;
-                      }),
+                  : () {
+                      if (_selected >= 0) {
+                        _deleteSelected();
+                      } else {
+                        setState(() {
+                          _shapes.clear();
+                          _preview = null;
+                          _selected = -1;
+                        });
+                      }
+                    },
               borderRadius: BorderRadius.circular(6),
               child: Container(
                 width: 26,
                 height: 26,
-                margin: const EdgeInsets.symmetric(vertical: 2),
+                margin: const EdgeInsets.symmetric(vertical: 1.5),
                 child: Icon(Icons.delete_outline,
                     size: 15,
-                    color: (_hlines.isEmpty && _trends.isEmpty)
-                        ? pal.textLo.withOpacity(0.4)
-                        : pal.textLo),
+                    color:
+                        hasShapes ? pal.textLo : pal.textLo.withOpacity(0.35)),
               ),
             ),
           ),
@@ -645,10 +891,11 @@ class _CandlePainter extends CustomPainter {
   final double? orderLine;
   final bool orderUp;
 
-  /// User-drawn shapes from the left drawing-tools rail.
-  final List<_HLine> hlines;
-  final List<_TrendLine> trends;
-  final _TrendLine? trendPreview;
+  /// User-drawn shapes from the left drawing-tools rail (+ the one being drawn,
+  /// and the index of the currently-selected shape for its handles).
+  final List<_Shape> shapes;
+  final _Shape? preview;
+  final int selected;
 
   _CandlePainter({
     required this.candles,
@@ -665,9 +912,9 @@ class _CandlePainter extends CustomPainter {
     required this.textColor,
     this.orderLine,
     this.orderUp = true,
-    this.hlines = const [],
-    this.trends = const [],
-    this.trendPreview,
+    this.shapes = const [],
+    this.preview,
+    this.selected = -1,
   });
 
   static const double _rightAxis = 58;
@@ -913,34 +1160,115 @@ class _CandlePainter extends CustomPainter {
 
   /// Paints the user's persistent horizontal / trend lines (and the in-progress
   /// trend preview) over the main price panel.
+  static const _fibLevels = [0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0];
+
   void _drawUserShapes(
       Canvas canvas, double Function(double) my, double plotW) {
-    final linePaint = Paint()
-      ..color = _drawColor
-      ..strokeWidth = 1.4
-      ..style = PaintingStyle.stroke;
-    for (final h in hlines) {
-      final y = my(h.price);
-      canvas.drawLine(Offset(0, y), Offset(plotW, y), linePaint);
-      canvas.drawRect(Rect.fromLTWH(plotW, y - 8, _rightAxis, 16),
-          Paint()..color = _drawColor);
-      _text(canvas, fmtPrice(h.price, market), Offset(plotW + 3, y - 6),
-          Colors.white, 9, bold: true);
+    double sx(double fx) => fx * plotW;
+    for (var i = 0; i < shapes.length; i++) {
+      _paintShape(canvas, shapes[i], my, sx, plotW, 1.0, i == selected);
     }
-    void trend(_TrendLine t, double opacity) {
-      canvas.drawLine(
-          Offset(t.fx1 * plotW, my(t.p1)),
-          Offset(t.fx2 * plotW, my(t.p2)),
-          Paint()
-            ..color = _drawColor.withOpacity(opacity)
-            ..strokeWidth = 1.4
-            ..style = PaintingStyle.stroke);
+    if (preview != null) {
+      _paintShape(canvas, preview!, my, sx, plotW, 0.6, false);
+    }
+  }
+
+  void _paintShape(Canvas canvas, _Shape s, double Function(double) my,
+      double Function(double) sx, double plotW, double opacity, bool sel) {
+    final col = _drawColor.withOpacity(opacity);
+    final stroke = Paint()
+      ..color = col
+      ..strokeWidth = sel ? 2.0 : 1.4
+      ..style = PaintingStyle.stroke;
+    final pts = s.pts;
+
+    switch (s.type) {
+      case _DrawTool.hline:
+        final y = my(pts[0].dy);
+        canvas.drawLine(Offset(0, y), Offset(plotW, y), stroke);
+        canvas.drawRect(Rect.fromLTWH(plotW, y - 8, _rightAxis, 16),
+            Paint()..color = col);
+        _text(canvas, fmtPrice(pts[0].dy, market), Offset(plotW + 3, y - 6),
+            Colors.white, 9, bold: true);
+      case _DrawTool.vline:
+        final x = sx(pts[0].dx);
+        canvas.drawLine(Offset(x, 0), Offset(x, mainHeight), stroke);
+      case _DrawTool.trend:
+        canvas.drawLine(Offset(sx(pts[0].dx), my(pts[0].dy)),
+            Offset(sx(pts[1].dx), my(pts[1].dy)), stroke);
+      case _DrawTool.ray:
+        final a = Offset(sx(pts[0].dx), my(pts[0].dy));
+        final b = Offset(sx(pts[1].dx), my(pts[1].dy));
+        final d = b - a;
+        // Extend past b to the plot's right edge.
+        final t = d.dx.abs() < 1e-6 ? 1.0 : (plotW - a.dx) / d.dx;
+        final end = t > 1 ? a + d * t : b;
+        canvas.drawLine(a, end, stroke);
+      case _DrawTool.rect:
+        final r = Rect.fromPoints(Offset(sx(pts[0].dx), my(pts[0].dy)),
+            Offset(sx(pts[1].dx), my(pts[1].dy)));
+        canvas.drawRect(r, Paint()..color = _drawColor.withOpacity(0.08 * opacity));
+        canvas.drawRect(r, stroke);
+      case _DrawTool.fib:
+        final x0 = sx(pts[0].dx), x1 = sx(pts[1].dx);
+        final lft = x0 < x1 ? x0 : x1;
+        final rgt = x0 < x1 ? x1 : x0;
+        for (final lvl in _fibLevels) {
+          final price = pts[0].dy + (pts[1].dy - pts[0].dy) * lvl;
+          final y = my(price);
+          canvas.drawLine(Offset(lft, y), Offset(rgt, y),
+              Paint()
+                ..color = col.withOpacity(0.7 * opacity)
+                ..strokeWidth = 1);
+          _text(canvas, '${(lvl * 100).toStringAsFixed(1)}%  ${fmtPrice(price, market)}',
+              Offset(lft + 2, y - 11), _drawColor.withOpacity(opacity), 8);
+        }
+        canvas.drawLine(Offset(x0, my(pts[0].dy)), Offset(x1, my(pts[1].dy)),
+            stroke..strokeWidth = 1);
+      case _DrawTool.brush:
+        final path = Path();
+        for (var i = 0; i < pts.length; i++) {
+          final o = Offset(sx(pts[i].dx), my(pts[i].dy));
+          if (i == 0) {
+            path.moveTo(o.dx, o.dy);
+          } else {
+            path.lineTo(o.dx, o.dy);
+          }
+        }
+        canvas.drawPath(path, stroke);
+      case _DrawTool.text:
+        final o = Offset(sx(pts[0].dx), my(pts[0].dy));
+        _text(canvas, s.label, Offset(o.dx + 4, o.dy - 6),
+            _drawColor.withOpacity(opacity), 12, bold: true);
+        canvas.drawCircle(o, 3, Paint()..color = col);
+      case _DrawTool.cursor:
+        break;
     }
 
-    for (final t in trends) {
-      trend(t, 1);
+    // Selection handles — small squares at each anchor of the active shape.
+    if (sel) {
+      final hp = Paint()..color = Colors.white;
+      final hb = Paint()
+        ..color = _drawColor
+        ..strokeWidth = 1.5
+        ..style = PaintingStyle.stroke;
+      List<Offset> handles;
+      switch (s.type) {
+        case _DrawTool.hline:
+          handles = [Offset(plotW / 2, my(pts[0].dy))];
+        case _DrawTool.vline:
+          handles = [Offset(sx(pts[0].dx), mainHeight / 2)];
+        case _DrawTool.brush:
+          handles = const [];
+        default:
+          handles = [for (final p in pts) Offset(sx(p.dx), my(p.dy))];
+      }
+      for (final h in handles) {
+        final r = Rect.fromCenter(center: h, width: 8, height: 8);
+        canvas.drawRect(r, hp);
+        canvas.drawRect(r, hb);
+      }
     }
-    if (trendPreview != null) trend(trendPreview!, 0.6);
   }
 
   void _panelFrame(Canvas canvas, double top, double plotW, String label) {
