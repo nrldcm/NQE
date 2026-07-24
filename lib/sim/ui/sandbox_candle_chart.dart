@@ -6,6 +6,7 @@
 // Live feed; a realistic simulated series otherwise.
 import 'dart:convert';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart' show DateFormat;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -125,6 +126,23 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
   double _lo = 0, _hi = 1, _plotW = 1;
   List<SimCandle> _lastCandles = const [];
 
+  // ---- viewport (pan + zoom) ----------------------------------------------
+  // _winCount == 0 → AUTO: fit ALL candles to the width (original behaviour).
+  // Otherwise the chart shows _winCount candles starting at _winStart. Both are
+  // "requested" values; they're resolved + clamped each build into _vStart /
+  // _vCount (the actual first-visible index / visible-candle count), which the
+  // gestures and the painter share exactly like _lo / _hi.
+  int _winCount = 0; // 0 = AUTO (all candles)
+  int _winStart = 0; // index of first visible candle
+  int _vStart = 0; // resolved first-visible index
+  int _vCount = 0; // resolved visible-candle count (0 when no candles)
+  // Sub-candle pan accumulator (so a slow drag still moves whole candles).
+  double _panAccum = 0;
+  // Pinch anchoring — captured at scale-gesture start.
+  int _pinchBaseCount = 0;
+  int _pinchBaseStart = 0;
+  double _pinchFocalPx = 0;
+
   // ---- drawing persistence (per symbol) ------------------------------------
   // Drawings are saved keyed by symbol, so each stock/coin/pair keeps its own
   // lines/levels/annotations across symbol switches and app restarts.
@@ -144,6 +162,9 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
       _shapes.clear();
       _preview = null;
       _selected = -1;
+      // Reset the viewport to fit-all for the new instrument.
+      _winCount = 0;
+      _winStart = 0;
       _loadShapes();
     }
   }
@@ -214,6 +235,8 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
     simState.candles.update(widget.symbol, _tf, price);
     final candles = simState.candles.series(widget.symbol, _tf, price);
     _lastCandles = candles;
+    // Resolve the pan/zoom viewport for this build (clamped to the series).
+    _resolveWindow(candles.length);
 
     final shown = (_cross != null && _cross! >= 0 && _cross! < candles.length)
         ? candles[_cross!]
@@ -287,6 +310,8 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
                       mainHeight: widget.height,
                       lo: _lo,
                       hi: _hi,
+                      winStart: _vStart,
+                      winCount: _vCount,
                       up: NqeColors.gain,
                       down: NqeColors.loss,
                       grid: pal.line,
@@ -300,8 +325,25 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
                   );
                   return Stack(
                     children: [
-                      _buildGesture(painter, width, candles.length),
+                      // Mouse-wheel / trackpad zoom (works in any tool mode),
+                      // centred on the pointer. Pan + pinch live inside
+                      // _buildGesture's cursor branch.
+                      Listener(
+                        onPointerSignal: (e) {
+                          if (e is PointerScrollEvent) {
+                            _wheelZoom(e.localPosition.dx, e.scrollDelta.dy,
+                                candles.length);
+                          }
+                        },
+                        child: _buildGesture(painter, candles.length),
+                      ),
                       Positioned(left: 0, top: 0, child: _drawingRail(context)),
+                      if (_winCount != 0)
+                        Positioned(
+                          top: 2,
+                          right: _CandlePainter._rightAxis + 4,
+                          child: _resetZoomButton(context),
+                        ),
                     ],
                   );
                 },
@@ -313,30 +355,51 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
     );
   }
 
-  void _updateCross(double dx, double width, int n) {
+  void _updateCross(double dx, int n) {
     if (n == 0) return;
-    const rightAxis = 58.0;
-    final plotW = (width - rightAxis).clamp(1.0, double.infinity);
-    final i = (dx / plotW * n).floor().clamp(0, n - 1);
+    // Map the screen x through the current viewport to a GLOBAL candle index.
+    final i = (_fxFromX(dx) * n).floor().clamp(0, n - 1);
     setState(() => _cross = i);
+  }
+
+  /// Resolves the requested pan/zoom viewport (_winStart / _winCount) into the
+  /// actual first-visible index (_vStart) and visible-candle count (_vCount),
+  /// clamped to the series. _winCount == 0 means AUTO (show all candles).
+  void _resolveWindow(int n) {
+    if (n <= 0) {
+      _vStart = 0;
+      _vCount = 0;
+      return;
+    }
+    final minC = n < 10 ? n : 10;
+    final count = _winCount == 0 ? n : _winCount.clamp(minC, n);
+    final start = _winStart.clamp(0, (n - count).clamp(0, n));
+    _vStart = start;
+    _vCount = count;
   }
 
   /// Replicates the painter's main-panel price range (min low / max high, with
   /// Bollinger bands and any pending-order line included, plus 8% padding) so
   /// the widget can map a tapped y-position to a price identically.
   void _computeRange(List<SimCandle> candles, _IndicatorData data) {
-    if (candles.isEmpty) {
+    final n = candles.length;
+    if (n == 0) {
       _lo = 0;
       _hi = 1;
       return;
     }
+    // Only the VISIBLE candles set the price range, so zooming re-fits the
+    // axis to what's on screen (TradingView-style).
+    final start = _vCount > 0 ? _vStart : 0;
+    final end = (_vCount > 0 ? _vStart + _vCount : n).clamp(0, n);
     var lo = double.infinity, hi = -double.infinity;
-    for (final c in candles) {
+    for (var i = start; i < end; i++) {
+      final c = candles[i];
       if (c.l < lo) lo = c.l;
       if (c.h > hi) hi = c.h;
     }
     if (data.boll != null) {
-      for (var i = 0; i < candles.length; i++) {
+      for (var i = start; i < end; i++) {
         final u = data.boll!.upper[i], l = data.boll!.lower[i];
         if (u != null && u > hi) hi = u;
         if (l != null && l < lo) lo = l;
@@ -362,7 +425,13 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
     return _hi - (_hi - _lo) * f;
   }
 
-  double _fxFromX(double dx) => (dx.clamp(0.0, _plotW)) / _plotW;
+  // Screen x → fx (fraction of the FULL series), through the current viewport,
+  // so drawings stay pinned to their candle/time across pan + zoom.
+  double _fxFromX(double dx) {
+    final n = _lastCandles.length;
+    if (n <= 0 || _vCount <= 0) return (dx.clamp(0.0, _plotW)) / _plotW;
+    return (_vStart + (dx.clamp(0.0, _plotW) / _plotW) * _vCount) / n;
+  }
 
   // Inverse mappings (data → screen), matching the painter, for hit-testing.
   double _yFromPrice(double p) {
@@ -370,7 +439,12 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
     return widget.height * (_hi - p) / span;
   }
 
-  double _xFromFx(double fx) => fx * _plotW;
+  // fx (fraction of the FULL series) → screen x, through the current viewport.
+  double _xFromFx(double fx) {
+    final n = _lastCandles.length;
+    if (n <= 0 || _vCount <= 0) return fx * _plotW;
+    return (fx * n - _vStart) / _vCount * _plotW;
+  }
 
   Offset _toScreen(Offset dataPt) =>
       Offset(_xFromFx(dataPt.dx), _yFromPrice(dataPt.dy));
@@ -397,9 +471,12 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
   /// The chart's gesture layer depends on the mode:
   ///  • a draw tool → full pan/tap to CREATE a shape;
   ///  • cursor with a selected shape → full pan to MOVE it / drag a handle;
-  ///  • cursor, nothing selected → tap to select + horizontal-drag crosshair
-  ///    (so a vertical swipe still scrolls the surrounding page).
-  Widget _buildGesture(Widget painter, double width, int n) {
+  ///  • cursor, nothing selected → tap to place the crosshair, a horizontal
+  ///    drag PANS the viewport, and a two-finger pinch ZOOMS. A horizontal-drag
+  ///    recognizer is used for the pan so a vertical swipe still scrolls the
+  ///    surrounding page; pinch lives on a separate (outer) scale recognizer so
+  ///    the two never collide on one GestureDetector.
+  Widget _buildGesture(Widget painter, int n) {
     if (_isDrawTool(_tool)) {
       return GestureDetector(
         behavior: HitTestBehavior.opaque,
@@ -423,14 +500,111 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
         child: painter,
       );
     }
+    // Cursor, nothing selected: pinch-to-zoom (outer scale recognizer) wrapping
+    // tap-to-crosshair + horizontal-drag-to-pan (inner).
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTapUp: (d) => _onCursorTap(d.localPosition),
-      onHorizontalDragStart: (d) => _updateCross(d.localPosition.dx, width, n),
-      onHorizontalDragUpdate: (d) => _updateCross(d.localPosition.dx, width, n),
-      onHorizontalDragEnd: (_) => setState(() => _cross = null),
-      child: painter,
+      onScaleStart: (d) => _onPinchStart(d, n),
+      onScaleUpdate: (d) => _onPinchUpdate(d, n),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapUp: (d) => _onCursorTap(d.localPosition),
+        onHorizontalDragStart: (_) => _panStart(),
+        onHorizontalDragUpdate: (d) =>
+            _panUpdate(d.primaryDelta ?? d.delta.dx, n),
+        onHorizontalDragEnd: (_) => _panEnd(),
+        child: painter,
+      ),
     );
+  }
+
+  // ---- pan + zoom ----------------------------------------------------------
+
+  /// Leaving AUTO: pin the current full window (count = n, start = 0) so all
+  /// subsequent pan/zoom math is well-defined.
+  void _leaveAuto(int n) {
+    if (_winCount == 0) {
+      _winCount = n;
+      _winStart = _vStart;
+    }
+  }
+
+  void _panStart() => _panAccum = 0;
+
+  void _panUpdate(double dxPixels, int n) {
+    if (n < 2) return;
+    final count = _vCount > 0 ? _vCount : n;
+    final cw = _plotW / count;
+    if (cw <= 0) return;
+    _panAccum += dxPixels;
+    final dCandles = (_panAccum / cw).truncate();
+    if (dCandles == 0) return;
+    _panAccum -= dCandles * cw;
+    setState(() {
+      _leaveAuto(n);
+      // Drag right (dx > 0) reveals EARLIER candles → start decreases.
+      _winStart =
+          (_winStart - dCandles).clamp(0, (n - _winCount).clamp(0, n));
+    });
+  }
+
+  void _panEnd() => _panAccum = 0;
+
+  /// Wheel / trackpad zoom: scroll up (dy < 0) zooms IN (fewer candles), down
+  /// zooms OUT, centred on the pointer's candle.
+  void _wheelZoom(double pointerPx, double scrollDy, int n) {
+    if (n < 2 || scrollDy == 0) return;
+    _applyZoom(scrollDy < 0 ? 0.85 : 1.18, pointerPx, n);
+  }
+
+  /// Multiply the visible-candle count by [factor], keeping the candle under
+  /// [pivotPx] fixed on screen.
+  void _applyZoom(double factor, double pivotPx, int n) {
+    final oldCount = _winCount == 0 ? n : _winCount;
+    final minC = n < 10 ? n : 10;
+    var newCount = (oldCount * factor).round().clamp(minC, n);
+    if (newCount == oldCount) {
+      // Guarantee a step even when rounding stalls at small counts.
+      if (factor < 1 && oldCount > minC) {
+        newCount = oldCount - 1;
+      } else if (factor > 1 && oldCount < n) {
+        newCount = oldCount + 1;
+      } else {
+        return;
+      }
+    }
+    final f = (pivotPx.clamp(0.0, _plotW)) / _plotW; // 0..1 across the plot
+    final pivotCandle = _vStart + f * oldCount;
+    final newStart =
+        (pivotCandle - f * newCount).round().clamp(0, (n - newCount).clamp(0, n));
+    setState(() {
+      _leaveAuto(n);
+      _winCount = newCount;
+      _winStart = newStart;
+    });
+  }
+
+  void _onPinchStart(ScaleStartDetails d, int n) {
+    _pinchBaseCount = _winCount == 0 ? n : _winCount;
+    _pinchBaseStart = _vStart;
+    _pinchFocalPx = d.localFocalPoint.dx;
+  }
+
+  void _onPinchUpdate(ScaleUpdateDetails d, int n) {
+    if (n < 2) return;
+    if ((d.scale - 1.0).abs() < 0.01) return; // ignore non-pinch drags
+    final minC = n < 10 ? n : 10;
+    // Pinch OUT (scale > 1) zooms IN → fewer candles.
+    final newCount = (_pinchBaseCount / d.scale).round().clamp(minC, n);
+    final f = (_pinchFocalPx.clamp(0.0, _plotW)) / _plotW;
+    final pivotCandle = _pinchBaseStart + f * _pinchBaseCount;
+    final newStart =
+        (pivotCandle - f * newCount).round().clamp(0, (n - newCount).clamp(0, n));
+    setState(() {
+      _leaveAuto(n);
+      _winCount = newCount;
+      _winStart = newStart;
+    });
   }
 
   // ---- create a shape ------------------------------------------------------
@@ -539,7 +713,7 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
     } else {
       setState(() => _selected = -1);
       final n = _lastCandles.length;
-      if (n > 0) _updateCross(p.dx, _plotW + 58.0, n);
+      if (n > 0) _updateCross(p.dx, n);
     }
   }
 
@@ -643,6 +817,36 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
       _selected = -1;
     });
     _saveShapes();
+  }
+
+  /// A small "fit all" button shown only while zoomed/panned; resets the
+  /// viewport back to AUTO (all candles fit to the width).
+  Widget _resetZoomButton(BuildContext context) {
+    final pal = context.nqe;
+    return Tooltip(
+      message: 'Reset zoom (fit all)',
+      child: Material(
+        color: pal.bg.withOpacity(0.82),
+        borderRadius: BorderRadius.circular(6),
+        child: InkWell(
+          onTap: () => setState(() {
+            _winCount = 0;
+            _winStart = 0;
+            _panAccum = 0;
+          }),
+          borderRadius: BorderRadius.circular(6),
+          child: Container(
+            width: 24,
+            height: 24,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: pal.line),
+            ),
+            child: Icon(Icons.fit_screen_outlined, size: 14, color: pal.textLo),
+          ),
+        ),
+      ),
+    );
   }
 
   /// TradingView-style vertical rail of drawing tools on the chart's left edge.
@@ -869,6 +1073,9 @@ class _SandboxCandleChartState extends State<SandboxCandleChart> {
       onSelected: (tf) => setState(() {
         _tf = tf;
         _cross = null;
+        // Series length changes with the timeframe — reset to fit-all.
+        _winCount = 0;
+        _winStart = 0;
       }),
       itemBuilder: (context) => [
         for (final tf in Timeframe.values)
@@ -978,6 +1185,10 @@ class _CandlePainter extends CustomPainter {
   /// Main-panel price range (already padded), computed by the widget so its
   /// gesture math and this painter share one price<->y mapping.
   final double lo, hi;
+
+  /// Visible viewport (resolved by the widget): the first-visible candle index
+  /// and the number of candles shown. winCount == 0 means AUTO (all candles).
+  final int winStart, winCount;
   final Color up, down, grid, textColor;
 
   /// A pending-order price level to draw (from the ticket), and its side colour.
@@ -999,6 +1210,8 @@ class _CandlePainter extends CustomPainter {
     required this.mainHeight,
     required this.lo,
     required this.hi,
+    required this.winStart,
+    required this.winCount,
     required this.up,
     required this.down,
     required this.grid,
@@ -1015,14 +1228,23 @@ class _CandlePainter extends CustomPainter {
   static const double _subH = 62;
   static const double _subGap = 6;
 
+  // Resolved visible window (winCount == 0 → AUTO = all candles).
+  int get _vs => winCount > 0 ? winStart : 0;
+  int get _vc => winCount > 0 ? winCount : candles.length;
+
   @override
   void paint(Canvas canvas, Size size) {
     if (candles.length < 2) return;
     final n = candles.length;
+    final start = _vs;
+    final count = _vc < 1 ? 1 : _vc;
+    final end = (start + count).clamp(0, n);
     final plotW = size.width - _rightAxis;
-    final cw = plotW / n;
+    // Only the visible window is laid out across the plot width.
+    final cw = plotW / count;
     final bodyW = (cw * 0.62).clamp(1.0, 18.0);
-    double cx(int i) => i * cw + cw / 2;
+    // Global candle index gi → screen x (centre of its slot).
+    double cx(int gi) => (gi - start + 0.5) * cw;
 
     // ---- main price panel ----
     final mainH = mainHeight;
@@ -1048,8 +1270,8 @@ class _CandlePainter extends CustomPainter {
       _line(canvas, data.boll!.mid, my, cx, _bollColor.withOpacity(0.4), 1);
     }
 
-    // Candles.
-    for (var i = 0; i < n; i++) {
+    // Candles (visible window only).
+    for (var i = start; i < end; i++) {
       final c = candles[i];
       final x = cx(i);
       final bull = c.c >= c.o;
@@ -1127,15 +1349,15 @@ class _CandlePainter extends CustomPainter {
       top += _subH + _subGap;
     }
 
-    // Time axis at the very bottom.
-    final labelEvery = (n / 4).ceil();
-    for (var i = 0; i < n; i += labelEvery) {
-      _text(canvas, _timeLabel(candles[i].t),
-          Offset(cx(i) - 14, size.height - _bottomAxis + 2), textColor, 9);
+    // Time axis at the very bottom (visible window only).
+    final labelEvery = (count / 4).ceil().clamp(1, count);
+    for (var gi = start; gi < end; gi += labelEvery) {
+      _text(canvas, _timeLabel(candles[gi].t),
+          Offset(cx(gi) - 14, size.height - _bottomAxis + 2), textColor, 9);
     }
 
-    // Crosshair across everything.
-    if (cross != null && cross! >= 0 && cross! < n) {
+    // Crosshair across everything (only when the crossed candle is in view).
+    if (cross != null && cross! >= start && cross! < end) {
       final x = cx(cross!);
       final p = Paint()
         ..color = textColor.withOpacity(0.6)
@@ -1151,13 +1373,14 @@ class _CandlePainter extends CustomPainter {
   void _volPanel(Canvas canvas, double top, double plotW,
       double Function(int) cx, double bodyW) {
     final vol = data.vol!;
+    final start = _vs, end = (_vs + _vc).clamp(0, candles.length);
     var mx = 0.0;
-    for (final v in vol) {
-      if (v > mx) mx = v;
+    for (var i = start; i < end; i++) {
+      if (vol[i] > mx) mx = vol[i];
     }
     if (mx <= 0) mx = 1;
     _panelFrame(canvas, top, plotW, 'Vol');
-    for (var i = 0; i < candles.length; i++) {
+    for (var i = start; i < end; i++) {
       final h = (vol[i] / mx) * (_subH - 12);
       final col = (candles[i].c >= candles[i].o ? up : down).withOpacity(0.5);
       canvas.drawRect(
@@ -1183,15 +1406,16 @@ class _CandlePainter extends CustomPainter {
       double Function(int) cx, double bodyW) {
     _panelFrame(canvas, top, plotW, 'MACD');
     final m = data.macd!;
+    final start = _vs, end = (_vs + _vc).clamp(0, candles.length);
     var mx = 1e-9;
-    for (var i = 0; i < candles.length; i++) {
+    for (var i = start; i < end; i++) {
       for (final v in [m.macd[i], m.signal[i], m.hist[i]]) {
         if (v != null && v.abs() > mx) mx = v.abs();
       }
     }
     double y(double v) => top + _subH / 2 - (v / mx) * (_subH / 2 - 4);
     // Histogram.
-    for (var i = 0; i < candles.length; i++) {
+    for (var i = start; i < end; i++) {
       final h = m.hist[i];
       if (h == null) continue;
       final y0 = y(0), y1 = y(h);
@@ -1223,8 +1447,10 @@ class _CandlePainter extends CustomPainter {
       double Function(int) cx) {
     _panelFrame(canvas, top, plotW, 'ATR');
     final a = data.atr!;
+    final start = _vs, end = (_vs + _vc).clamp(0, a.length);
     var mx = 1e-9;
-    for (final v in a) {
+    for (var i = start; i < end; i++) {
+      final v = a[i];
       if (v != null && v > mx) mx = v;
     }
     double y(double v) => top + _subH - (v / mx) * (_subH - 6);
@@ -1236,8 +1462,10 @@ class _CandlePainter extends CustomPainter {
       double Function(int) cx) {
     _panelFrame(canvas, top, plotW, 'OBV');
     final o = data.obv!;
+    final start = _vs, end = (_vs + _vc).clamp(0, o.length);
     var mn = double.infinity, mx = -double.infinity;
-    for (final v in o) {
+    for (var i = start; i < end; i++) {
+      final v = o[i];
       if (v == null) continue;
       if (v < mn) mn = v;
       if (v > mx) mx = v;
@@ -1257,7 +1485,11 @@ class _CandlePainter extends CustomPainter {
 
   void _drawUserShapes(
       Canvas canvas, double Function(double) my, double plotW) {
-    double sx(double fx) => fx * plotW;
+    final n = candles.length;
+    final start = _vs, count = _vc < 1 ? 1 : _vc;
+    // fx (fraction of the FULL series) → screen x through the viewport, so
+    // shapes stay pinned to their candle/time as the chart pans + zooms.
+    double sx(double fx) => n <= 0 ? fx * plotW : (fx * n - start) / count * plotW;
     for (var i = 0; i < shapes.length; i++) {
       _paintShape(canvas, shapes[i], my, sx, plotW, 1.0, i == selected);
     }
@@ -1385,7 +1617,14 @@ class _CandlePainter extends CustomPainter {
       ..style = PaintingStyle.stroke;
     final path = Path();
     var started = false;
+    final start = _vs, end = _vs + _vc;
     for (var i = 0; i < series.length; i++) {
+      // Skip candles outside the visible window (indicator arrays are aligned
+      // to the FULL series; index globally, draw only what's on screen).
+      if (i < start || i >= end) {
+        started = false;
+        continue;
+      }
       final v = series[i];
       if (v == null) {
         started = false;
