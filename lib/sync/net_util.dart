@@ -13,19 +13,22 @@ Future<HttpServer> bindWithFallback(
   Handler handler,
   int preferred, {
   int span = 40,
+  SecurityContext? securityContext,
 }) async {
   Object? lastErr;
   for (var p = preferred; p <= preferred + span; p++) {
     if (p < 1 || p > 65535) continue;
     try {
-      return await shelf_io.serve(handler, '0.0.0.0', p);
+      return await shelf_io.serve(handler, '0.0.0.0', p,
+          securityContext: securityContext);
     } catch (e) {
       lastErr = e; // in use / not permitted — try the next port
     }
   }
   // Last resort: let the OS pick any free port.
   try {
-    return await shelf_io.serve(handler, '0.0.0.0', 0);
+    return await shelf_io.serve(handler, '0.0.0.0', 0,
+        securityContext: securityContext);
   } catch (e) {
     lastErr = e;
   }

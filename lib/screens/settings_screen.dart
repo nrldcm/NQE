@@ -679,14 +679,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
               leading: Icon(Icons.public, color: pal.textHi),
               title: Text('Open in a browser',
                   style: TextStyle(color: pal.textHi)),
-              subtitle: Text('http://${s.host ?? '—'}:${s.port}',
+              subtitle: Text(s.webUrl,
                   style: TextStyle(color: pal.textLo, fontSize: 12)),
               trailing: IconButton(
                 icon: Icon(Icons.copy, size: 18, color: pal.textLo),
                 tooltip: 'Copy URL',
                 onPressed: () {
-                  Clipboard.setData(
-                      ClipboardData(text: 'http://${s.host ?? ''}:${s.port}'));
+                  Clipboard.setData(ClipboardData(text: s.webUrl));
                   _snack('URL copied');
                 },
               ),

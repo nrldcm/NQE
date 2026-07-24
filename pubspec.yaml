@@ -85,6 +85,7 @@ flutter:
     - assets/web/canvaskit/
     - assets/web/canvaskit/chromium/
     - assets/web/icons/
+    - assets/tls/
 
 flutter_launcher_icons:
   android: true

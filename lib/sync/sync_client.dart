@@ -242,14 +242,17 @@ class SyncClient extends ChangeNotifier {
     // Hybrid connect: try each candidate address in priority order — LAN Wi-Fi
     // first, then the mesh-VPN (Tailscale) fallback — and use the first that
     // answers. This lets sync survive the phone leaving Wi-Fi.
+    // Match the page's transport: a web app served over https MUST use wss
+    // (a browser blocks ws:// from an https page), and the phone serves TLS.
+    final wsScheme = (kIsWeb && Uri.base.scheme == 'https') ? 'wss' : 'ws';
     for (var i = 0; i < _hosts.length; i++) {
       final host = _hosts[i];
       final label = _hosts.length > 1 ? ' [${i + 1}/${_hosts.length}]' : '';
       _set(SyncConn.connecting,
           'Connecting to $host:$_port…$label (attempt ${attempt + 1})');
       try {
-        final channel =
-            WebSocketChannel.connect(Uri.parse('ws://$host:$_port/sync'));
+        final channel = WebSocketChannel.connect(
+            Uri.parse('$wsScheme://$host:$_port/sync'));
         _channel = channel;
         _authed = false;
 
