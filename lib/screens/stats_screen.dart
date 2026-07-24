@@ -6,6 +6,10 @@ import '../calc.dart';
 import '../db/database.dart';
 import '../format.dart';
 import '../models.dart';
+import '../sim/sim_db.dart';
+import '../sim/sim_models.dart';
+import '../sim/sim_state.dart';
+import '../sim/ui/sandbox_common.dart';
 import '../state/app_state.dart';
 import '../theme.dart';
 import '../widgets/charts.dart';
@@ -47,11 +51,24 @@ class _StatsScreenState extends State<StatsScreen> {
       backgroundColor: pal.bg,
       appBar: AppBar(title: const Text('Trading Statistics')),
       body: ListenableBuilder(
-        listenable: appState,
+        // Rebuild on ledger OR sandbox changes — sandbox profiles appear here
+        // too, so the trading stats cover the real books AND the simulation.
+        listenable: Listenable.merge([appState, simState]),
         builder: (context, _) {
-          final accounts = appState.accounts;
+          // Unified picker: real ledger books first, then sandbox profiles
+          // (marked with a 'sim:' id prefix so the body can branch).
+          final picks = <_Pick>[
+            for (final a in appState.accounts)
+              _Pick(id: a.id, name: a.name, color: a.color, isSim: false),
+            for (final p in simState.profiles)
+              _Pick(
+                  id: 'sim:${p.id}',
+                  name: p.name,
+                  color: 0xFF888888,
+                  isSim: true),
+          ];
 
-          if (accounts.isEmpty) {
+          if (picks.isEmpty) {
             if (appState.loading) {
               return const Center(child: CircularProgressIndicator());
             }
@@ -62,30 +79,34 @@ class _StatsScreenState extends State<StatsScreen> {
             );
           }
 
-          // Resolve the effective selection (default to the first account).
-          Account account = accounts.firstWhere(
-            (a) => a.id == _selectedId,
-            orElse: () => accounts.first,
-          );
+          final pick = picks.firstWhere((p) => p.id == _selectedId,
+              orElse: () => picks.first);
 
           return Column(
             children: [
               _AccountChips(
-                accounts: accounts,
-                value: account.id,
+                picks: picks,
+                value: pick.id,
                 onChanged: (id) => setState(() => _selectedId = id),
               ),
               Expanded(
-                child: FutureBuilder<_StatsData>(
-                  future: _dataFor(account.id),
-                  builder: (context, snap) {
-                    if (snap.connectionState != ConnectionState.done ||
-                        !snap.hasData) {
-                      return const Center(child: CircularProgressIndicator());
-                    }
-                    return _StatsBody(account: account, data: snap.data!);
-                  },
-                ),
+                child: pick.isSim
+                    ? _SandboxStatsBody(
+                        profileId: pick.id.substring(4),
+                        key: ValueKey(pick.id))
+                    : FutureBuilder<_StatsData>(
+                        future: _dataFor(pick.id),
+                        builder: (context, snap) {
+                          if (snap.connectionState != ConnectionState.done ||
+                              !snap.hasData) {
+                            return const Center(
+                                child: CircularProgressIndicator());
+                          }
+                          final account = appState.accounts
+                              .firstWhere((a) => a.id == pick.id);
+                          return _StatsBody(account: account, data: snap.data!);
+                        },
+                      ),
               ),
             ],
           );
@@ -95,20 +116,34 @@ class _StatsScreenState extends State<StatsScreen> {
   }
 }
 
+/// One entry in the stats picker — a real ledger book or a sandbox profile.
+class _Pick {
+  final String id;
+  final String name;
+  final int color;
+  final bool isSim;
+  const _Pick(
+      {required this.id,
+      required this.name,
+      required this.color,
+      required this.isSim});
+}
+
 class _StatsData {
   final List<Cashflow> cashflows;
   final List<Trade> trades;
   const _StatsData({required this.cashflows, required this.trades});
 }
 
-/// Always-visible, horizontally-scrollable account picker (chips). Avoids the
-/// dropdown-menu scroll quirk where top items could scroll out of reach.
+/// Always-visible, horizontally-scrollable picker (chips) for books + sandbox
+/// profiles. Avoids the dropdown-menu scroll quirk where top items could
+/// scroll out of reach.
 class _AccountChips extends StatelessWidget {
-  final List<Account> accounts;
+  final List<_Pick> picks;
   final String value;
   final ValueChanged<String> onChanged;
   const _AccountChips({
-    required this.accounts,
+    required this.picks,
     required this.value,
     required this.onChanged,
   });
@@ -121,10 +156,10 @@ class _AccountChips extends StatelessWidget {
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-        itemCount: accounts.length,
+        itemCount: picks.length,
         separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (context, i) {
-          final a = accounts[i];
+          final a = picks[i];
           final selected = a.id == value;
           return GestureDetector(
             onTap: () => onChanged(a.id),
@@ -141,14 +176,18 @@ class _AccountChips extends StatelessWidget {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Container(
-                    width: 9,
-                    height: 9,
-                    decoration: BoxDecoration(
-                      color: Color(a.color),
-                      shape: BoxShape.circle,
+                  if (a.isSim)
+                    Icon(Icons.science_outlined,
+                        size: 13, color: selected ? pal.textHi : pal.textLo)
+                  else
+                    Container(
+                      width: 9,
+                      height: 9,
+                      decoration: BoxDecoration(
+                        color: Color(a.color),
+                        shape: BoxShape.circle,
+                      ),
                     ),
-                  ),
                   const SizedBox(width: 8),
                   Text(
                     a.name,
@@ -254,6 +293,204 @@ class _StatsBody extends StatelessWidget {
         const SizedBox(height: 8),
         _MonthlyTable(account: a, months: months),
       ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sandbox profile stats — the simulation's trading performance, shown in the
+// same Trading Statistics screen alongside the real books.
+// ---------------------------------------------------------------------------
+class _SandboxStatsBody extends StatefulWidget {
+  final String profileId;
+  const _SandboxStatsBody({super.key, required this.profileId});
+
+  @override
+  State<_SandboxStatsBody> createState() => _SandboxStatsBodyState();
+}
+
+class _SandboxStatsBodyState extends State<_SandboxStatsBody> {
+  Future<List<SimTrade>>? _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = SimDb.instance.trades(widget.profileId, limit: 100000);
+  }
+
+  static const _mon = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<List<SimTrade>>(
+      future: _future,
+      builder: (context, snap) {
+        if (!snap.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        return _body(context, snap.data!);
+      },
+    );
+  }
+
+  Widget _body(BuildContext context, List<SimTrade> trades) {
+    SimAccount? acc;
+    for (final p in simState.profiles) {
+      if (p.id == widget.profileId) {
+        acc = p;
+        break;
+      }
+    }
+    if (acc == null) {
+      return const EmptyState(
+          icon: Icons.science_outlined, title: 'Profile not found');
+    }
+    final cur = acc.currency;
+    final closed = trades.where((t) => t.realizedPnl != 0).toList();
+    final wins = closed.where((t) => t.realizedPnl > 0).length;
+    final losses = closed.length - wins;
+    final winRate = closed.isEmpty ? 0.0 : wins / closed.length * 100;
+    final fees = trades.fold<double>(0, (s, t) => s + t.fee);
+    final equity = simState.equityOfProfile(acc.id);
+    final start = acc.startingCash;
+    final totalRet = start == 0 ? 0.0 : (equity - start) / start * 100;
+
+    // Realised P&L grouped by calendar month (newest first).
+    final byMonth = <int, double>{}; // key = year*100 + month
+    final cntMonth = <int, int>{};
+    for (final t in closed) {
+      final d = DateTime.fromMillisecondsSinceEpoch(t.tsMs);
+      final k = d.year * 100 + d.month;
+      byMonth[k] = (byMonth[k] ?? 0) + t.realizedPnl;
+      cntMonth[k] = (cntMonth[k] ?? 0) + 1;
+    }
+    final monthKeys = byMonth.keys.toList()..sort((a, b) => b.compareTo(a));
+
+    final cards = <Widget>[
+      StatCard(
+          label: 'Equity',
+          value: simMoney(equity, currency: cur),
+          icon: Icons.account_balance_wallet_outlined),
+      StatCard(
+        label: 'Total return',
+        value: signedPctStr(totalRet),
+        valueColor: NqeColors.pnl(totalRet),
+        icon: Icons.trending_up,
+      ),
+      StatCard(
+        label: 'Realized P/L',
+        value: simSignedMoney(acc.realizedPnl, currency: cur),
+        valueColor: NqeColors.pnl(acc.realizedPnl),
+        icon: Icons.paid_outlined,
+      ),
+      StatCard(
+        label: 'Win rate',
+        value: closed.isEmpty ? '—' : '${winRate.toStringAsFixed(0)}%',
+        sub: '${wins}W · ${losses}L',
+        icon: Icons.emoji_events_outlined,
+      ),
+      StatCard(
+          label: 'Fees paid',
+          value: simMoney(fees, currency: cur),
+          icon: Icons.receipt_outlined),
+      StatCard(
+          label: 'Total trades',
+          value: '${trades.length}',
+          icon: Icons.swap_horiz),
+    ];
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 32),
+      children: [
+        GridView.count(
+          crossAxisCount: 2,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          crossAxisSpacing: 12,
+          mainAxisSpacing: 12,
+          childAspectRatio: 1.55,
+          children: cards,
+        ),
+        const SizedBox(height: 20),
+        SectionTitle('Monthly realised P&L'),
+        const SizedBox(height: 8),
+        if (monthKeys.isEmpty)
+          _emptyBox(context, 'No closed trades yet')
+        else
+          _monthlyBox(context, monthKeys, byMonth, cntMonth, cur),
+      ],
+    );
+  }
+
+  Widget _emptyBox(BuildContext context, String text) {
+    final pal = context.nqe;
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 28),
+      decoration: BoxDecoration(
+        color: pal.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: pal.line),
+      ),
+      child: Center(
+          child: Text(text, style: TextStyle(color: pal.textLo))),
+    );
+  }
+
+  Widget _monthlyBox(BuildContext context, List<int> keys,
+      Map<int, double> pnl, Map<int, int> cnt, String cur) {
+    final pal = context.nqe;
+    return Container(
+      decoration: BoxDecoration(
+        color: pal.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: pal.line),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          for (var i = 0; i < keys.length; i++)
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+              decoration: BoxDecoration(
+                border: i == keys.length - 1
+                    ? null
+                    : Border(
+                        bottom: BorderSide(color: pal.line.withOpacity(0.5))),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '${_mon[(keys[i] % 100) - 1]} ${keys[i] ~/ 100}',
+                      style: TextStyle(
+                          color: pal.textHi,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  Text('${cnt[keys[i]]} trades',
+                      style: TextStyle(color: pal.textLo, fontSize: 12)),
+                  const SizedBox(width: 14),
+                  SizedBox(
+                    width: 120,
+                    child: Text(
+                      simSignedMoney(pnl[keys[i]]!, currency: cur),
+                      textAlign: TextAlign.right,
+                      style: TextStyle(
+                          color: NqeColors.pnl(pnl[keys[i]]!),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
